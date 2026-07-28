@@ -1,0 +1,9 @@
+{
+  "name": "@ppe/canvas-core",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": { "build": "tsc" },
+  "dependencies": { "zod": "^3.23.0" },
+  "devDependencies": { "typescript": "^5.5.0" }
+}

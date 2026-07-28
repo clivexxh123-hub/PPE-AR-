@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>3D Product Demo</title>
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+  <style>
+    :root {
+      --bg-top: #1d2028;
+      --bg-bottom: #090a0d;
+      --panel-bg: rgba(11, 14, 18, 0.58);
+      --panel-border: rgba(255, 255, 255, 0.14);
+      --text-main: #ffffff;
+      --text-sub: rgba(255, 255, 255, 0.72);
+      --button-bg: rgba(255, 255, 255, 0.14);
+      --button-hover: rgba(255, 255, 255, 0.24);
+      --accent: #8fd3ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text-main);
+      background:
+        radial-gradient(circle at center, rgba(255, 255, 255, 0.1), transparent 28%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+      overflow: hidden;
+    }
+
+    .page {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    .page::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 50% 45%, rgba(149, 204, 255, 0.12), transparent 18%),
+        radial-gradient(circle at 50% 100%, rgba(255, 255, 255, 0.06), transparent 28%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .header {
+      position: absolute;
+      top: max(20px, env(safe-area-inset-top));
+      left: max(20px, env(safe-area-inset-left));
+      right: max(20px, env(safe-area-inset-right));
+      z-index: 10;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    .title-group {
+      max-width: min(560px, calc(100vw - 48px));
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 12px;
+      padding: 8px 12px;
+      border: 1px solid var(--panel-border);
+      border-radius: 999px;
+      background: var(--panel-bg);
+      color: var(--text-sub);
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      backdrop-filter: blur(14px);
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 12px rgba(143, 211, 255, 0.9);
+    }
+
+    .title {
+      margin: 0 0 10px;
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: 0.02em;
+    }
+
+    .subtitle {
+      margin: 0;
+      font-size: clamp(13px, 1.8vw, 16px);
+      line-height: 1.6;
+      color: var(--text-sub);
+    }
+
+    .badge {
+      flex: 0 0 auto;
+      margin-top: 4px;
+      padding: 10px 14px;
+      border: 1px solid var(--panel-border);
+      border-radius: 999px;
+      background: var(--panel-bg);
+      color: rgba(255, 255, 255, 0.82);
+      font-size: 12px;
+      backdrop-filter: blur(14px);
+    }
+
+    model-viewer {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      height: 100%;
+      background: transparent;
+      --poster-color: transparent;
+    }
+
+    .loading {
+      position: absolute;
+      inset: 0;
+      z-index: 8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(180deg, rgba(10, 12, 16, 0.36), rgba(10, 12, 16, 0.7));
+      transition: opacity 0.35s ease, visibility 0.35s ease;
+      backdrop-filter: blur(6px);
+    }
+
+    .loading.is-hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .loading-card {
+      min-width: min(300px, calc(100vw - 40px));
+      max-width: 360px;
+      padding: 20px;
+      border: 1px solid var(--panel-border);
+      border-radius: 22px;
+      background: rgba(7, 10, 14, 0.7);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.26);
+      text-align: center;
+      backdrop-filter: blur(16px);
+    }
+
+    .loading-title {
+      margin: 0 0 8px;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .loading-text {
+      margin: 0 0 14px;
+      color: var(--text-sub);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .progress {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #73bfff 0%, #bce5ff 100%);
+      transition: width 0.2s ease;
+    }
+
+    .tips {
+      position: absolute;
+      left: 50%;
+      bottom: calc(28px + env(safe-area-inset-bottom));
+      z-index: 10;
+      transform: translateX(-50%);
+      max-width: calc(100vw - 40px);
+      padding: 12px 18px;
+      border: 1px solid var(--panel-border);
+      border-radius: 999px;
+      background: var(--panel-bg);
+      color: rgba(255, 255, 255, 0.88);
+      font-size: 13px;
+      text-align: center;
+      white-space: nowrap;
+      backdrop-filter: blur(14px);
+    }
+
+    .actions {
+      position: absolute;
+      right: max(20px, env(safe-area-inset-right));
+      bottom: calc(28px + env(safe-area-inset-bottom));
+      z-index: 10;
+      display: flex;
+      gap: 10px;
+    }
+
+    .action-btn {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      padding: 11px 18px;
+      background: var(--button-bg);
+      color: var(--text-main);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.2s ease, transform 0.2s ease;
+      backdrop-filter: blur(12px);
+    }
+
+    .action-btn:hover {
+      background: var(--button-hover);
+      transform: translateY(-1px);
+    }
+
+    .action-btn:active {
+      transform: translateY(0);
+    }
+
+    .status {
+      position: absolute;
+      top: auto;
+      left: 50%;
+      bottom: calc(98px + env(safe-area-inset-bottom));
+      z-index: 10;
+      transform: translateX(-50%);
+      max-width: calc(100vw - 40px);
+      padding: 10px 14px;
+      border-radius: 16px;
+      background: rgba(165, 58, 58, 0.88);
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.5;
+      text-align: center;
+      display: none;
+    }
+
+    .status.is-visible {
+      display: block;
+    }
+
+    @media (max-width: 900px) {
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .badge {
+        margin-top: 0;
+      }
+
+      .actions {
+        right: auto;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+
+      .tips {
+        bottom: calc(88px + env(safe-area-inset-bottom));
+        white-space: normal;
+      }
+
+      .status {
+        bottom: calc(154px + env(safe-area-inset-bottom));
+      }
+    }
+
+    @media (max-width: 640px) {
+      .page {
+        min-height: 100svh;
+      }
+
+      .header {
+        top: max(14px, env(safe-area-inset-top));
+        left: max(14px, env(safe-area-inset-left));
+        right: max(14px, env(safe-area-inset-right));
+        gap: 12px;
+      }
+
+      .title-group {
+        max-width: 100%;
+      }
+
+      .eyebrow {
+        margin-bottom: 10px;
+        padding: 7px 11px;
+        font-size: 11px;
+      }
+
+      .title {
+        margin-bottom: 8px;
+        font-size: 26px;
+      }
+
+      .subtitle {
+        max-width: 92%;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .badge {
+        padding: 8px 12px;
+        font-size: 11px;
+      }
+
+      .loading-card {
+        min-width: auto;
+        width: calc(100vw - 28px);
+        padding: 18px 16px;
+      }
+
+      .tips {
+        width: calc(100vw - 28px);
+        padding: 10px 14px;
+        bottom: calc(86px + env(safe-area-inset-bottom));
+        border-radius: 18px;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .actions {
+        left: max(14px, env(safe-area-inset-left));
+        right: max(14px, env(safe-area-inset-right));
+        bottom: calc(14px + env(safe-area-inset-bottom));
+        transform: none;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .action-btn {
+        width: 100%;
+        min-height: 44px;
+        padding: 12px 10px;
+        border-radius: 16px;
+        font-size: 12px;
+      }
+
+      .status {
+        width: calc(100vw - 28px);
+        bottom: calc(146px + env(safe-area-inset-bottom));
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div class="title-group">
+        <div class="eyebrow">Interactive 360 Demo</div>
+        <h1 class="title">3D Product Demo</h1>
+        <p class="subtitle">拖动查看 360 度模型细节，支持桌面与手机浏览，适合客户快速预览展示。</p>
+      </div>
+      <div class="badge">Mobile Ready</div>
+    </div>
+
+    <model-viewer
+      id="viewer"
+      src="./model.glb"
+      camera-controls
+      auto-rotate
+      auto-rotate-delay="0"
+      rotation-per-second="24deg"
+      shadow-intensity="1"
+      shadow-softness="0.8"
+      exposure="1"
+      environment-image="neutral"
+      touch-action="pan-y"
+      interaction-prompt="none"
+      disable-tap
+      ar
+      ar-modes="webxr scene-viewer quick-look">
+    </model-viewer>
+
+    <div class="loading" id="loading">
+      <div class="loading-card">
+        <p class="loading-title">模型加载中</p>
+        <p class="loading-text" id="loadingText">首次打开会稍慢一些，请稍候。</p>
+        <div class="progress" aria-hidden="true">
+          <div class="progress-bar" id="progressBar"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="status" id="status">模型加载失败，请检查模型文件或网络后重试。</div>
+    <div class="tips">拖动旋转 / 双指缩放 / 支持手机查看</div>
+
+    <div class="actions">
+      <button class="action-btn" id="toggleRotateBtn" type="button">关闭自动旋转</button>
+      <button class="action-btn" id="resetBtn" type="button">重置视角</button>
+    </div>
+  </div>
+
+  <script>
+    const viewer = document.getElementById("viewer");
+    const loading = document.getElementById("loading");
+    const loadingText = document.getElementById("loadingText");
+    const progressBar = document.getElementById("progressBar");
+    const status = document.getElementById("status");
+    const toggleRotateBtn = document.getElementById("toggleRotateBtn");
+    const resetBtn = document.getElementById("resetBtn");
+
+    function hideLoading() {
+      loading.classList.add("is-hidden");
+    }
+
+    function updateProgress(progress) {
+      const percent = Math.max(0, Math.min(100, Math.round(progress * 100)));
+      progressBar.style.width = percent + "%";
+      loadingText.textContent = percent >= 100 ? "即将完成，请稍候。" : "模型加载中 " + percent + "%";
+    }
+
+    viewer.addEventListener("progress", (event) => {
+      if (event.detail && typeof event.detail.totalProgress === "number") {
+        updateProgress(event.detail.totalProgress);
+      }
+    });
+
+    viewer.addEventListener("load", () => {
+      progressBar.style.width = "100%";
+      loadingText.textContent = "加载完成";
+      hideLoading();
+    });
+
+    viewer.addEventListener("error", () => {
+      hideLoading();
+      status.classList.add("is-visible");
+    });
+
+    toggleRotateBtn.addEventListener("click", () => {
+      viewer.autoRotate = !viewer.autoRotate;
+      toggleRotateBtn.textContent = viewer.autoRotate ? "关闭自动旋转" : "开启自动旋转";
+    });
+
+    resetBtn.addEventListener("click", () => {
+      if (typeof viewer.resetTurntableRotation === "function") {
+        viewer.resetTurntableRotation();
+      } else if (typeof viewer.jumpCameraToGoal === "function") {
+        viewer.jumpCameraToGoal();
+      }
+    });
+  </script>
+</body>
+</html>

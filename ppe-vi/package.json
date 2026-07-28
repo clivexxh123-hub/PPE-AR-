@@ -1,0 +1,21 @@
+{
+  "name": "ppe-vi",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/domain-types",
+    "packages/api-contracts",
+    "packages/canvas-core",
+    "apps/ai-worker",
+    "apps/api"
+  ],
+  "scripts": {
+    "build": "npm run build -w @ppe/domain-types && npm run build -w @ppe/api-contracts && npm run build -w @ppe/canvas-core && npm run build -w @ppe/ai-worker && npm run build -w @ppe/api",
+    "test": "node --test \"apps/api/dist/test/e2e.test.js\"",
+    "dev:api": "node apps/api/dist/src/server.js",
+    "dev:worker": "node apps/ai-worker/dist/index.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

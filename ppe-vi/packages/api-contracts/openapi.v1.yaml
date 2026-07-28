@@ -1,0 +1,48 @@
+openapi: 3.0.3
+info:
+  title: PPE VI 业务 API
+  version: "1.0.0-draft"
+  description: >
+    MS1 契约初稿,评审冻结后任何破坏性变更需升 /api/v2(架构 §8)。
+    鉴权:MS1 用 x-tenant-id / x-user-id 请求头模拟,MS2 换 token,路径与响应不变。
+servers:
+  - url: /api/v1
+paths:
+  /products:
+    post:
+      summary: 创建产品(可带视角与印刷区)
+      responses: { "201": { description: created }, "400": { $ref: "#/components/responses/Problem" } }
+  /products/{id}:
+    get:
+      summary: 查询产品(强制租户隔离,跨租户一律 404)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: ok }, "404": { $ref: "#/components/responses/Problem" } }
+  /designs:
+    post: { summary: 创建方案, responses: { "201": { description: created } } }
+  /designs/{id}/versions:
+    post:
+      summary: 保存不可变画布版本快照(服务端校验 canvas schema v1)
+      responses: { "201": { description: created }, "400": { $ref: "#/components/responses/Problem" } }
+    get: { summary: 版本列表, responses: { "200": { description: ok } } }
+  /generation-jobs:
+    post:
+      summary: 提交生成意图,立即返回 job_id(§4.2)
+      responses: { "202": { description: accepted (jobId, status, traceId, pollUrl) } }
+  /generation-jobs/{id}:
+    get:
+      summary: 查询任务状态与进度
+      responses: { "200": { description: "status ∈ queued|running|succeeded|failed|cancelled|timed_out" } }
+components:
+  responses:
+    Problem:
+      description: 统一错误体
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [errorCode, message, traceId]
+            properties:
+              errorCode: { type: string, description: 见 error-codes.ts }
+              message: { type: string }
+              traceId: { type: string }
+# 内部回调(不对外):POST /internal/v1/jobs/{id}/events — 体为 WorkerCallbackEvent(job-protocol.ts)

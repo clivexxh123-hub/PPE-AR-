@@ -1,0 +1,16 @@
+# Dependencies
+**/node_modules/
+
+# Generated build output
+**/dist/
+**/.next/
+**/coverage/
+
+# Local environment and runtime files
+**/.env
+**/.env.*
+*.log
+
+# Editor and OS metadata
+.DS_Store
+Thumbs.db
