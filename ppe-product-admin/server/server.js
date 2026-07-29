@@ -1,48 +1,67 @@
 require("dotenv").config();
 
+const path = require("path");
+const express = require("express");
+const cors = require("cors");
 
-const express=require("express");
+const productRoutes = require("./routes/product");
 
-const cors=require("cors");
-
-
-const productRoutes=require("./routes/product");
-
-
-const app=express();
-
+const app = express();
 
 app.use(cors());
 
-app.use(express.json());
+app.use(express.json({
+    limit: "10mb"
+}));
 
+app.use(express.urlencoded({
+    extended: true,
+    limit: "10mb"
+}));
 
 
 app.use(
-"/api",
-productRoutes
+    "/uploads",
+    express.static(
+        path.join(__dirname, "uploads")
+    )
 );
 
 
+app.use(
+    "/api",
+    productRoutes
+);
 
-app.get("/",(req,res)=>{
 
-    res.send(
-        "PPE Product Admin API Running"
-    );
-
+app.get("/", (req, res) => {
+    res.json({
+        success: true,
+        name: "PPE Product Admin API",
+        port: Number(process.env.PORT || 9530)
+    });
 });
 
 
+app.use((error, req, res, next) => {
+    console.error("global error:", error);
 
-const PORT=process.env.PORT||9530;
+    if (error.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({
+            success: false,
+            message: "上传文件不能超过20MB"
+        });
+    }
+
+    res.status(500).json({
+        success: false,
+        message: error.message || "服务器内部错误"
+    });
+});
 
 
-app.listen(PORT,()=>{
+const PORT = Number(process.env.PORT || 9530);
 
-    console.log(
-        "Server running:",
-        PORT
-    );
-
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`PPE Product Admin API running: ${PORT}`);
 });
