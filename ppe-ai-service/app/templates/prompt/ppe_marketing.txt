@@ -1,0 +1,14 @@
+Create a close-up realistic commercial studio product photo of ${product_keywords}.
+The image represents one ${product_name}.
+Product category: ${product_category}.
+Business scene context for styling only, do not draw the full scene: ${scene}.
+Visual style: ${style}.
+Composition requirements:
+- Show exactly one main PPE product in the foreground, centered and clearly visible.
+- The PPE product must occupy most of the image area and be the obvious subject.
+- Show the product alone as a standalone object, not worn by a person.
+- Use a plain neutral gray or white studio background, tabletop product photography, realistic material details.
+- Keep the background minimal and uncluttered, with natural shadows and professional lighting.
+- Do not show people, faces, workers, full rooms, factories, machines, or complex environments.
+- No poster layout, no collage, no website screenshot, no text blocks, no labels, no typography.
+- The image should look like a B2B catalog product photo, professional, safe, reliable, and realistic.

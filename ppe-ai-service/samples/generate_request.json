@@ -1,0 +1,12 @@
+{
+  "product_name": "工业安全帽",
+  "product_category": "PPE 安全防护用品",
+  "scene": "现代化工厂车间，背景中有佩戴防护装备的工人",
+  "style": "干净真实的商业海报风格",
+  "size": "1024x1024",
+  "prompt_overrides": {
+    "audience": "工业品采购客户"
+  },
+  "output_format": "png",
+  "sync": true
+}

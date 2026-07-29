@@ -1,0 +1,15 @@
+﻿{
+    "size":  "512x512",
+    "product_category":  "PPE 眼部防护用品",
+    "output_format":  "png",
+    "product_name":  "防护眼镜",
+    "style":  "真实商业产品图风格，透明防护眼镜，单个产品，镜片清晰，专业灯光，展示安全、防尘和可靠",
+    "sync":  true,
+    "scene":  "工业实验室和精密加工场景，干净背景，产品摄影台面",
+    "prompt_overrides":  {
+                             "color":  "透明镜片，灰色或黑色镜框",
+                             "material":  "透明防冲击镜片，柔性镜框",
+                             "features":  "防尘，防飞溅，视野清晰，佩戴舒适",
+                             "target_audience":  "实验室人员、机加工人员、安全防护采购"
+                         }
+}

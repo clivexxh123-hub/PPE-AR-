@@ -1,0 +1,15 @@
+﻿{
+    "size":  "512x512",
+    "product_category":  "PPE 安全防护用品",
+    "output_format":  "png",
+    "product_name":  "工业安全帽",
+    "style":  "真实商业产品图风格，黄色工业安全帽，单个产品，居中构图，专业灯光，展示专业、安全、可靠",
+    "sync":  true,
+    "scene":  "现代化工厂车间，干净背景，产品摄影台面",
+    "prompt_overrides":  {
+                             "color":  "黄色",
+                             "material":  "ABS 外壳，缓冲内衬",
+                             "features":  "抗冲击，耐磨，佩戴舒适",
+                             "target_audience":  "工厂采购、安全员、工程施工单位"
+                         }
+}

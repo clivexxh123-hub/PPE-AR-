@@ -1,0 +1,15 @@
+﻿{
+    "size":  "512x512",
+    "product_category":  "PPE 面部防护用品",
+    "output_format":  "png",
+    "product_name":  "防护面罩",
+    "style":  "真实商业产品图风格，透明防护面罩，单个产品，透明材质清晰，专业灯光，展示防护性和专业感",
+    "sync":  true,
+    "scene":  "实验室和工业检测场景，简洁背景，产品摄影台面",
+    "prompt_overrides":  {
+                             "color":  "透明面屏，黑色或白色支架",
+                             "material":  "透明 PC 面屏，轻量头戴结构",
+                             "features":  "防飞溅，视野清晰，佩戴舒适",
+                             "target_audience":  "实验室人员、工业检测人员、医护和安全防护采购"
+                         }
+}

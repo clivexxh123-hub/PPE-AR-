@@ -1,0 +1,15 @@
+﻿{
+    "size":  "512x512",
+    "product_category":  "PPE 手部防护用品",
+    "output_format":  "png",
+    "product_name":  "防护手套",
+    "style":  "真实商业产品图风格，一双防护手套，单个产品组合，细节清晰，专业灯光，展示耐用、防护和可靠",
+    "sync":  true,
+    "scene":  "工业装配和机械操作场景，简洁背景，产品摄影台面",
+    "prompt_overrides":  {
+                             "color":  "黑灰配色",
+                             "material":  "耐磨涂层，弹性针织内衬",
+                             "features":  "防滑，耐磨，灵活操作，适合长时间作业",
+                             "target_audience":  "工厂工人、仓储物流、机械操作人员"
+                         }
+}

@@ -1,0 +1,15 @@
+﻿{
+    "size":  "512x512",
+    "product_category":  "PPE 高可视防护用品",
+    "output_format":  "png",
+    "product_name":  "反光安全背心",
+    "style":  "真实商业产品图风格，高可视反光安全背心，单个产品，荧光黄色，反光条清晰，专业灯光，展示醒目、安全、可靠",
+    "sync":  true,
+    "scene":  "道路施工和仓储物流场景，干净背景，产品摄影台面",
+    "prompt_overrides":  {
+                             "color":  "荧光黄色，银色反光条",
+                             "material":  "轻量透气面料，高亮反光条",
+                             "features":  "高可视，轻便，适合户外施工和仓储作业",
+                             "target_audience":  "道路施工人员、仓储物流人员、工程安全采购"
+                         }
+}
