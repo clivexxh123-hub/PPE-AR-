@@ -1,0 +1,23 @@
+{
+  "product_name": "磨砂矿帽-帽",
+  "product_category": "个人防护/头部防护/安全帽",
+  "scene": "现代化工厂车间，工业安全生产场景",
+  "style": "真实商业产品图风格，单个产品主体，干净背景，专业安全防护用品展示",
+  "size": "512x512",
+  "prompt_overrides": {
+    "goal": "展示 PPE 产品的专业、安全、可靠",
+    "category_path": "个人防护/头部防护/安全帽",
+    "goods_id": "2529770657287406720",
+    "goods_no": "1-LG-MSKM1",
+    "has_files": 0,
+    "file_count": 0,
+    "colors": [
+      "黄色",
+      "红色",
+      "蓝色"
+    ],
+    "color_hint": "黄色、红色、蓝色"
+  },
+  "output_format": "png",
+  "sync": true
+}

@@ -1,0 +1,21 @@
+{
+  "product_name": "特厚乳胶手套",
+  "product_category": "个人防护/手部防护/手套/浸胶手套",
+  "scene": "工业仓库和生产线作业场景",
+  "style": "真实商业产品图风格，单个产品主体，干净背景，专业安全防护用品展示",
+  "size": "512x512",
+  "prompt_overrides": {
+    "goal": "展示 PPE 产品的专业、安全、可靠",
+    "category_path": "个人防护/手部防护/手套/浸胶手套",
+    "goods_id": "2529905596835301248",
+    "goods_no": "6-LG-40CMYRJST",
+    "has_files": 0,
+    "file_count": 0,
+    "colors": [
+      "黄色"
+    ],
+    "color_hint": "黄色"
+  },
+  "output_format": "png",
+  "sync": true
+}
