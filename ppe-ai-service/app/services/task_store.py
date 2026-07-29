@@ -1,4 +1,4 @@
-import json
+﻿import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,9 +16,9 @@ def _task_path(task_id: str) -> Path:
     return settings.task_dir / f"{task_id}.json"
 
 
-def create_task(kind: str, request_payload: dict[str, Any]) -> TaskRecord:
+def create_task(kind: str, request_payload: dict[str, Any], task_id: str | None = None) -> TaskRecord:
     ensure_storage_dirs()
-    task_id = uuid.uuid4().hex
+    task_id = task_id or uuid.uuid4().hex
     record = TaskRecord(
         task_id=task_id,
         status=TaskStatus.queued,
@@ -32,23 +32,32 @@ def create_task(kind: str, request_payload: dict[str, Any]) -> TaskRecord:
 
 def save_task(record: TaskRecord, extra: dict[str, Any] | None = None) -> None:
     ensure_storage_dirs()
-    payload = record.model_dump()
-    if extra:
-        payload.update(extra)
     existing = {}
     path = _task_path(record.task_id)
     if path.exists():
         existing = json.loads(path.read_text(encoding="utf-8"))
+
+    model_fields = set(TaskRecord.model_fields)
+    preserved = {key: value for key, value in existing.items() if key not in model_fields}
+    payload = {**preserved, **record.model_dump()}
+    if extra:
+        payload.update(extra)
     payload.setdefault("created_at", existing.get("created_at", _now()))
     payload["updated_at"] = _now()
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def load_task(task_id: str) -> TaskRecord | None:
+def load_task_payload(task_id: str) -> dict[str, Any] | None:
     path = _task_path(task_id)
     if not path.exists():
         return None
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_task(task_id: str) -> TaskRecord | None:
+    payload = load_task_payload(task_id)
+    if payload is None:
+        return None
     return TaskRecord.model_validate(payload)
 
 

@@ -1,13 +1,20 @@
-﻿from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
+﻿import time
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from app.core.config import settings
+from app.schemas.business_protocol import BusinessTaskResponse, GenerationTaskInput, TaskResult, WorkerCallbackEvent
 from app.schemas.tasks import GenerateRequest, LogoPlaceRequest, TaskResponse, TaskStatus
+from app.services.asset_result import build_local_task_result
+from app.services.callback_service import send_worker_callback
+from app.services.error_codes import map_exception_to_error
 from app.services.generation_engine import generate_ai_image
 from app.services.input_adapter import resolve_image_source, save_upload
 from app.services.logo_service import normalize_logo
 from app.services.prompt_templates import build_prompt
-from app.services.task_store import create_task, load_task, save_task, to_response
+from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
 
 router = APIRouter()
 
@@ -38,6 +45,23 @@ async def generate_image(payload: GenerateRequest, background_tasks: BackgroundT
     else:
         background_tasks.add_task(_run_generate_task, record.task_id, payload)
     return to_response(load_task(record.task_id) or record)
+
+
+@router.post(
+    "/ai/tasks",
+    response_model=BusinessTaskResponse,
+    summary="提交业务 AI 生成任务",
+    description="接收业务端 GenerationTaskInput 风格任务。当前阶段 inputAssets 只记录不解析，callback 支持 HTTP(S) 发送和 internal:// 记录。",
+    tags=["AI 图片生成"],
+)
+async def create_business_ai_task(payload: GenerationTaskInput, background_tasks: BackgroundTasks) -> BusinessTaskResponse:
+    record = create_task("ai.business_generate", payload.model_dump(mode="json"), task_id=payload.jobId)
+    save_task(record, extra=_business_extra(payload))
+    if bool(payload.parameters.get("sync", False)):
+        await _run_business_generate_task(payload)
+    else:
+        background_tasks.add_task(_run_business_generate_task, payload)
+    return _business_response(load_task(payload.jobId) or record)
 
 
 @router.post(
@@ -97,6 +121,163 @@ def get_output_file(task_id: str, filename: str) -> FileResponse:
     if not path.exists():
         raise HTTPException(status_code=404, detail="结果文件不存在。")
     return FileResponse(path)
+
+
+def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateRequest:
+    prompt_overrides = parameters.get("prompt_overrides")
+    if not isinstance(prompt_overrides, dict):
+        prompt_overrides = {}
+    return GenerateRequest(
+        product_name=str(parameters.get("product_name", "")).strip(),
+        product_category=str(parameters.get("product_category", "")).strip(),
+        scene=str(parameters.get("scene", "")).strip(),
+        style=str(parameters.get("style", "")).strip(),
+        size=str(parameters.get("size", "512x512")).strip(),
+        prompt_overrides=prompt_overrides,
+        output_format=str(parameters.get("output_format", "png")).strip(),
+        sync=bool(parameters.get("sync", False)),
+    )
+
+
+def _business_extra(
+    task: GenerationTaskInput,
+    result: TaskResult | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    retryable: bool | None = None,
+    callback_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "business_protocol": {
+            "jobId": task.jobId,
+            "tenantId": task.tenantId,
+            "traceId": task.traceId,
+            "attempt": task.attempt,
+            "modelProfileId": task.modelProfileId,
+            "workflowVersion": task.workflowVersion,
+            "inputAssets": [asset.model_dump(mode="json") for asset in task.inputAssets],
+            "callback": task.callback,
+            "parameters": task.parameters,
+            "asset_resolution": "pending_confirmation",
+        }
+    }
+    if result is not None:
+        payload["business_result"] = result.model_dump(mode="json")
+    if error_code or error_message:
+        payload["business_error"] = {
+            "errorCode": error_code,
+            "errorMessage": error_message,
+            "retryable": retryable,
+        }
+    if callback_result is not None:
+        payload["business_last_callback"] = callback_result
+    return payload
+
+
+def _business_response(record) -> BusinessTaskResponse:
+    raw = load_task_payload(record.task_id) or {}
+    protocol = raw.get("business_protocol") or {}
+    error = raw.get("business_error") or {}
+    result_payload = raw.get("business_result")
+    result = TaskResult.model_validate(result_payload) if isinstance(result_payload, dict) else None
+    return BusinessTaskResponse(
+        jobId=str(protocol.get("jobId") or record.task_id),
+        task_id=record.task_id,
+        status=record.status,
+        message=record.message,
+        result_url=record.result_url,
+        metadata_url=record.metadata_url,
+        errorCode=error.get("errorCode"),
+        errorMessage=error.get("errorMessage"),
+        retryable=error.get("retryable"),
+        result=result,
+    )
+
+
+async def _report_business_event(
+    task: GenerationTaskInput,
+    status: TaskStatus,
+    started_at: float,
+    progress: int | None = None,
+    result: TaskResult | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    retryable: bool | None = None,
+) -> dict[str, Any]:
+    event = WorkerCallbackEvent(
+        jobId=task.jobId,
+        status=status,
+        progress=progress,
+        elapsedMs=int((time.monotonic() - started_at) * 1000),
+        errorCode=error_code,
+        errorMessage=error_message,
+        retryable=retryable,
+        modelProfileId=task.modelProfileId,
+        workflowVersion=task.workflowVersion,
+        result=result,
+    )
+    return await send_worker_callback(task.callback, event)
+
+
+async def _run_business_generate_task(task: GenerationTaskInput) -> None:
+    started_at = time.monotonic()
+    record = load_task(task.jobId)
+    if record is None:
+        return
+    try:
+        record.status = TaskStatus.running
+        record.message = f"正在使用 {settings.ai_engine} 引擎处理业务 AI 任务。"
+        callback_result = await _report_business_event(task, TaskStatus.running, started_at, progress=10)
+        save_task(record, extra=_business_extra(task, callback_result=callback_result))
+
+        generate_payload = _parameters_to_generate_request(task.parameters)
+        await resolve_image_source(generate_payload.product_image)
+        await resolve_image_source(generate_payload.logo_image)
+        prompt = build_prompt(
+            product_name=generate_payload.product_name,
+            product_category=generate_payload.product_category,
+            scene=generate_payload.scene,
+            style=generate_payload.style,
+            overrides=generate_payload.prompt_overrides,
+        )
+        image_path, metadata_path, engine = await generate_ai_image(
+            task.jobId,
+            prompt,
+            generate_payload.size,
+            generate_payload.output_format,
+        )
+        result = build_local_task_result(task.jobId, image_path)
+        record.status = TaskStatus.succeeded
+        record.message = f"业务 AI 图片已生成，当前使用 {engine} 引擎。"
+        record.output_path = str(image_path)
+        record.metadata_path = str(metadata_path)
+        record.result_url = f"/outputs/{task.jobId}/{image_path.name}"
+        record.metadata_url = f"/outputs/{task.jobId}/{metadata_path.name}"
+        callback_result = await _report_business_event(task, TaskStatus.succeeded, started_at, progress=100, result=result)
+        save_task(record, extra=_business_extra(task, result=result, callback_result=callback_result))
+    except Exception as exc:
+        error_code, error_message, retryable = map_exception_to_error(exc)
+        record.status = TaskStatus.failed
+        record.message = "业务 AI 图片生成失败。"
+        record.error = error_message
+        callback_result = await _report_business_event(
+            task,
+            TaskStatus.failed,
+            started_at,
+            error_code=error_code,
+            error_message=error_message,
+            retryable=retryable,
+        )
+        save_task(
+            record,
+            extra=_business_extra(
+                task,
+                error_code=error_code,
+                error_message=error_message,
+                retryable=retryable,
+                callback_result=callback_result,
+            ),
+        )
 
 
 async def _run_generate_task(task_id: str, payload: GenerateRequest) -> None:
