@@ -1,4 +1,4 @@
-﻿from typing import Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -8,18 +8,26 @@ from app.schemas.tasks import TaskStatus
 class TaskInputAsset(BaseModel):
     model_config = ConfigDict(title="业务输入资产")
 
-    assetId: str = Field(description="业务端资产 ID，具体解析方式待后端确认。")
-    role: Literal["product_reference", "printed_design", "logo", "scene"] = Field(description="资产角色。")
+    assetId: str = Field(description="业务数据库资产 ID，只用于追踪审计，AI 服务不查询业务数据库。")
+    role: str = Field(description="资产角色，例如 product_reference 或 logo；未知 role 原样记录。")
     version: int = Field(default=1, ge=0, description="资产版本。")
+
+    @field_validator("assetId", "role")
+    @classmethod
+    def required_asset_text_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("该字段不能为空。")
+        return value
 
 
 class TaskResult(BaseModel):
     model_config = ConfigDict(title="业务任务结果资产")
 
-    assetKey: str = Field(description="结果资产 key。当前阶段使用 local:// 临时 key，后续替换为 OSS key。")
+    assetKey: str = Field(description="结果资产 key，格式为 results/{tenantId}/{jobId}/attempt-{attempt}/result.{ext}。")
     width: int = Field(description="结果图片宽度。")
     height: int = Field(description="结果图片高度。")
-    hash: str = Field(description="结果图片 sha256。")
+    hash: str = Field(description="结果图片完整 64 位小写 SHA-256。")
 
 
 class WorkerCallbackEvent(BaseModel):
@@ -47,9 +55,9 @@ class GenerationTaskInput(BaseModel):
     attempt: int = Field(default=0, ge=0, description="当前尝试次数。")
     modelProfileId: str = Field(description="模型配置 ID。")
     workflowVersion: str = Field(description="工作流版本。")
-    inputAssets: list[TaskInputAsset] = Field(default_factory=list, description="输入资产列表，当前阶段只记录不解析。")
-    parameters: dict[str, Any] = Field(default_factory=dict, description="生成参数，映射到现有 GenerateRequest。")
-    callback: str | None = Field(default=None, description="回调地址。HTTP(S) 会尝试发送，internal:// 当前只记录。")
+    inputAssets: list[TaskInputAsset] = Field(default_factory=list, description="输入资产列表，当前阶段只做审计记录，不解析资产内容。")
+    parameters: dict[str, Any] = Field(default_factory=dict, description="生成参数，包含产品信息以及 product_image.url / logo_image.url。")
+    callback: str | None = Field(default=None, description="HTTP(S) 回调地址；缺失或不可达不阻塞生成结果。")
 
     @field_validator("jobId", "tenantId", "traceId", "modelProfileId", "workflowVersion")
     @classmethod

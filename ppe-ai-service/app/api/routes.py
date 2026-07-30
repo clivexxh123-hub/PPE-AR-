@@ -1,4 +1,5 @@
 ﻿import time
+import json
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
@@ -6,8 +7,8 @@ from fastapi.responses import FileResponse
 
 from app.core.config import settings
 from app.schemas.business_protocol import BusinessTaskResponse, GenerationTaskInput, TaskResult, WorkerCallbackEvent
-from app.schemas.tasks import GenerateRequest, LogoPlaceRequest, TaskResponse, TaskStatus
-from app.services.asset_result import build_local_task_result
+from app.schemas.tasks import GenerateRequest, ImageSource, LogoPlaceRequest, TaskResponse, TaskStatus
+from app.services.asset_result import build_business_task_result
 from app.services.callback_service import send_worker_callback
 from app.services.error_codes import map_exception_to_error
 from app.services.generation_engine import generate_ai_image
@@ -123,11 +124,62 @@ def get_output_file(task_id: str, filename: str) -> FileResponse:
     return FileResponse(path)
 
 
+def _image_source_from_parameter(value: Any) -> ImageSource | None:
+    if not isinstance(value, dict):
+        return None
+    payload = {key: value.get(key) for key in ("file_id", "url", "local_path") if value.get(key)}
+    if not payload:
+        return None
+    return ImageSource.model_validate(payload)
+
+
+def _image_url_from_parameter(parameters: dict[str, Any], key: str) -> str | None:
+    value = parameters.get(key)
+    if not isinstance(value, dict):
+        return None
+    url = value.get("url")
+    if url is None:
+        return None
+    url_text = str(url).strip()
+    return url_text or None
+
+
+def _assets_by_role(task: GenerationTaskInput) -> dict[str, list[dict[str, Any]]]:
+    assets: dict[str, list[dict[str, Any]]] = {}
+    for asset in task.inputAssets:
+        assets.setdefault(asset.role, []).append(asset.model_dump(mode="json"))
+    return assets
+
+
+def _asset_warnings(task: GenerationTaskInput) -> list[dict[str, str]]:
+    roles = {asset.role for asset in task.inputAssets}
+    product_image_url = _image_url_from_parameter(task.parameters, "product_image")
+    logo_image_url = _image_url_from_parameter(task.parameters, "logo_image")
+    warnings: list[dict[str, str]] = []
+    if "product_reference" in roles and not product_image_url:
+        warnings.append(
+            {
+                "code": "MISSING_PRODUCT_IMAGE_URL",
+                "message": "inputAssets 包含 product_reference，但 parameters.product_image.url 缺失；当前按文生图继续。",
+            }
+        )
+    if "logo" in roles and not logo_image_url:
+        warnings.append(
+            {
+                "code": "MISSING_LOGO_IMAGE_URL",
+                "message": "inputAssets 包含 logo，但 parameters.logo_image.url 缺失；当前按文生图继续。",
+            }
+        )
+    return warnings
+
+
 def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateRequest:
     prompt_overrides = parameters.get("prompt_overrides")
     if not isinstance(prompt_overrides, dict):
         prompt_overrides = {}
     return GenerateRequest(
+        product_image=_image_source_from_parameter(parameters.get("product_image")),
+        logo_image=_image_source_from_parameter(parameters.get("logo_image")),
         product_name=str(parameters.get("product_name", "")).strip(),
         product_category=str(parameters.get("product_category", "")).strip(),
         scene=str(parameters.get("scene", "")).strip(),
@@ -142,11 +194,15 @@ def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateReque
 def _business_extra(
     task: GenerationTaskInput,
     result: TaskResult | None = None,
+    local_result_url: str | None = None,
+    local_output_path: str | None = None,
     error_code: str | None = None,
     error_message: str | None = None,
     retryable: bool | None = None,
     callback_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    product_image_url = _image_url_from_parameter(task.parameters, "product_image")
+    logo_image_url = _image_url_from_parameter(task.parameters, "logo_image")
     payload: dict[str, Any] = {
         "business_protocol": {
             "jobId": task.jobId,
@@ -156,13 +212,25 @@ def _business_extra(
             "modelProfileId": task.modelProfileId,
             "workflowVersion": task.workflowVersion,
             "inputAssets": [asset.model_dump(mode="json") for asset in task.inputAssets],
-            "callback": task.callback,
+            "inputAssetsByRole": _assets_by_role(task),
+            "raw_callback": task.callback,
+            "callback_source": "TASK_CENTER_BASE_URL",
             "parameters": task.parameters,
-            "asset_resolution": "pending_confirmation",
+            "image_urls": {
+                "product_image": product_image_url,
+                "logo_image": logo_image_url,
+            },
+            "asset_warnings": _asset_warnings(task),
+            "storage_backend": "local",
+            "oss_uploaded": False,
+            "oss_pending": True,
+            "local_result_url": local_result_url,
+            "local_output_path": local_output_path,
         }
     }
     if result is not None:
         payload["business_result"] = result.model_dump(mode="json")
+        payload["business_protocol"]["assetKey"] = result.assetKey
     if error_code or error_message:
         payload["business_error"] = {
             "errorCode": error_code,
@@ -171,7 +239,22 @@ def _business_extra(
         }
     if callback_result is not None:
         payload["business_last_callback"] = callback_result
+        if callback_result.get("callback_skipped"):
+            payload["business_protocol"]["callback_skipped"] = True
+            payload["business_protocol"]["callback_skip_reason"] = callback_result.get("reason")
+        if callback_result.get("callback"):
+            payload["business_protocol"]["callback_url"] = callback_result.get("callback")
+        if callback_result.get("sent") is False and not callback_result.get("callback_skipped"):
+            payload["business_callback_error"] = callback_result
     return payload
+
+
+def _append_output_metadata(metadata_path, extra: dict[str, Any]) -> None:
+    if metadata_path is None or not metadata_path.exists():
+        return
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.update(extra)
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _business_response(record) -> BusinessTaskResponse:
@@ -216,7 +299,7 @@ async def _report_business_event(
         workflowVersion=task.workflowVersion,
         result=result,
     )
-    return await send_worker_callback(task.callback, event)
+    return await send_worker_callback(settings.task_center_base_url, event)
 
 
 async def _run_business_generate_task(task: GenerationTaskInput) -> None:
@@ -231,8 +314,6 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         save_task(record, extra=_business_extra(task, callback_result=callback_result))
 
         generate_payload = _parameters_to_generate_request(task.parameters)
-        await resolve_image_source(generate_payload.product_image)
-        await resolve_image_source(generate_payload.logo_image)
         prompt = build_prompt(
             product_name=generate_payload.product_name,
             product_category=generate_payload.product_category,
@@ -246,7 +327,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             generate_payload.size,
             generate_payload.output_format,
         )
-        result = build_local_task_result(task.jobId, image_path)
+        result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path)
         record.status = TaskStatus.succeeded
         record.message = f"业务 AI 图片已生成，当前使用 {engine} 引擎。"
         record.output_path = str(image_path)
@@ -254,7 +335,15 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         record.result_url = f"/outputs/{task.jobId}/{image_path.name}"
         record.metadata_url = f"/outputs/{task.jobId}/{metadata_path.name}"
         callback_result = await _report_business_event(task, TaskStatus.succeeded, started_at, progress=100, result=result)
-        save_task(record, extra=_business_extra(task, result=result, callback_result=callback_result))
+        extra = _business_extra(
+            task,
+            result=result,
+            local_result_url=record.result_url,
+            local_output_path=record.output_path,
+            callback_result=callback_result,
+        )
+        _append_output_metadata(metadata_path, extra)
+        save_task(record, extra=extra)
     except Exception as exc:
         error_code, error_message, retryable = map_exception_to_error(exc)
         record.status = TaskStatus.failed
