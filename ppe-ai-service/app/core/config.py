@@ -37,6 +37,8 @@ class Settings(BaseModel):
     comfyui_timeout_seconds: int = int(os.getenv("COMFYUI_TIMEOUT_SECONDS", "300"))
     comfyui_poll_interval_seconds: float = float(os.getenv("COMFYUI_POLL_INTERVAL_SECONDS", "1.5"))
     comfyui_poll_attempts: int = int(os.getenv("COMFYUI_POLL_ATTEMPTS", "200"))
+    task_center_base_url: str | None = os.getenv("TASK_CENTER_BASE_URL")
+    storage_backend: str = os.getenv("STORAGE_BACKEND", "local").strip().lower()
     comfyui_default_negative_prompt: str = os.getenv(
         "COMFYUI_NEGATIVE_PROMPT",
         (

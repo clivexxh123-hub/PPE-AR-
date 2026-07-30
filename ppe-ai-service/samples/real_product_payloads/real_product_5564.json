@@ -1,0 +1,41 @@
+{
+  "product_name": "永磊护目镜",
+  "product_category": "个人防护/眼脸防护/防护眼镜/护目镜",
+  "scene": "中性浅灰产品摄影背景，少量实验室或工业安全检测氛围，场景只作为风格暗示，不绘制完整工厂、人物或复杂环境",
+  "style": "真实商业产品摄影风格，single product, product-centered, close-up studio product photo. 单个护目镜或防护眼镜，镜片透明，镜框轮廓清晰，产品居中。干净白色或浅灰背景，自然阴影，专业布光，清晰对焦，高细节，B2B 产品目录图。不要文字、不要标签、不要水印、不要海报拼贴、不要网页截图、不要多人或人物佩戴、不要复杂工厂背景。",
+  "size": "512x512",
+  "prompt_overrides": {
+    "goal": "展示 PPE 产品的专业、安全、可靠",
+    "category_path": "个人防护/眼脸防护/防护眼镜/护目镜",
+    "product_focus": "单个护目镜或防护眼镜，镜片透明，镜框轮廓清晰，产品居中",
+    "presentation_requirements": [
+      "exactly one main PPE product",
+      "standalone product, not worn by a person",
+      "centered foreground product composition",
+      "plain white or light gray studio background",
+      "sharp focus, realistic material details",
+      "单个护目镜或防护眼镜，镜片透明，镜框轮廓清晰，产品居中"
+    ],
+    "generation_constraints": [
+      "no text",
+      "no watermark",
+      "no logo unless provided later",
+      "no collage",
+      "no website screenshot",
+      "no multiple panels",
+      "no person",
+      "no face",
+      "no worker wearing the product",
+      "no full factory room",
+      "no machinery as main subject",
+      "no duplicated products"
+    ],
+    "negative_hints": "no text, no watermark, no logo unless provided later, no collage, no website screenshot, no multiple panels, no person, no face, no worker wearing the product, no full factory room, no machinery as main subject, no duplicated products",
+    "goods_id": "2524816251572912512",
+    "goods_no": "11-LG-YLHMJ",
+    "has_files": 0,
+    "file_count": 0
+  },
+  "output_format": "png",
+  "sync": true
+}

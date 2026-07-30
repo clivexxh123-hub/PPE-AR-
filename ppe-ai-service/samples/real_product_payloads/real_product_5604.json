@@ -1,12 +1,36 @@
 {
   "product_name": "V2经典V型透气下巴托 旋",
   "product_category": "个人防护/头部防护/安全帽/头盔/V系列安全帽",
-  "scene": "现代化工厂车间，工业安全生产场景",
-  "style": "真实商业产品图风格，单个产品主体，干净背景，专业安全防护用品展示",
+  "scene": "中性浅灰产品摄影背景，少量现代工厂安全生产氛围，场景只作为风格暗示，不绘制完整工厂、人物或复杂环境",
+  "style": "真实商业产品摄影风格，single product, product-centered, close-up studio product photo. 主色参考：黄色、红色、蓝色、白色、橙色。单个工业安全帽，帽壳轮廓清晰，正面或三分之二角度展示，材质细节清楚。干净白色或浅灰背景，自然阴影，专业布光，清晰对焦，高细节，B2B 产品目录图。不要文字、不要标签、不要水印、不要海报拼贴、不要网页截图、不要多人或人物佩戴、不要复杂工厂背景。",
   "size": "512x512",
   "prompt_overrides": {
     "goal": "展示 PPE 产品的专业、安全、可靠",
     "category_path": "个人防护/头部防护/安全帽/头盔/V系列安全帽",
+    "product_focus": "单个工业安全帽，帽壳轮廓清晰，正面或三分之二角度展示，材质细节清楚",
+    "presentation_requirements": [
+      "exactly one main PPE product",
+      "standalone product, not worn by a person",
+      "centered foreground product composition",
+      "plain white or light gray studio background",
+      "sharp focus, realistic material details",
+      "单个工业安全帽，帽壳轮廓清晰，正面或三分之二角度展示，材质细节清楚"
+    ],
+    "generation_constraints": [
+      "no text",
+      "no watermark",
+      "no logo unless provided later",
+      "no collage",
+      "no website screenshot",
+      "no multiple panels",
+      "no person",
+      "no face",
+      "no worker wearing the product",
+      "no full factory room",
+      "no machinery as main subject",
+      "no duplicated products"
+    ],
+    "negative_hints": "no text, no watermark, no logo unless provided later, no collage, no website screenshot, no multiple panels, no person, no face, no worker wearing the product, no full factory room, no machinery as main subject, no duplicated products",
     "goods_id": "2529968944675292672",
     "goods_no": "100017619",
     "has_files": 0,
