@@ -30,6 +30,14 @@ class Settings(BaseModel):
     comfyui_workflow_path: Path = Path(
         os.getenv("COMFYUI_WORKFLOW_PATH", str(base_dir / "app" / "templates" / "comfyui" / "text_to_image_workflow.json"))
     )
+    comfyui_text_to_image_workflow_path: Path = Path(
+        os.getenv("COMFYUI_TEXT_TO_IMAGE_WORKFLOW_PATH", str(comfyui_workflow_path))
+    )
+    comfyui_image_to_image_workflow_path: Path = Path(
+        os.getenv("COMFYUI_IMAGE_TO_IMAGE_WORKFLOW_PATH", str(base_dir / "app" / "templates" / "comfyui" / "image_to_image_workflow.json"))
+    )
+    comfyui_image_node_id: str | None = os.getenv("COMFYUI_IMAGE_NODE_ID")
+    comfyui_denoise: float = float(os.getenv("COMFYUI_DENOISE", "0.60"))
     comfyui_positive_node_id: str | None = os.getenv("COMFYUI_POSITIVE_NODE_ID")
     comfyui_negative_node_id: str | None = os.getenv("COMFYUI_NEGATIVE_NODE_ID")
     comfyui_latent_node_id: str | None = os.getenv("COMFYUI_LATENT_NODE_ID")
@@ -58,3 +66,4 @@ settings = Settings()
 def ensure_storage_dirs() -> None:
     for path in (settings.input_dir, settings.output_dir, settings.task_dir):
         path.mkdir(parents=True, exist_ok=True)
+

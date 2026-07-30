@@ -1,5 +1,6 @@
 ﻿import time
 import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
@@ -175,6 +176,19 @@ def _asset_warnings(task: GenerationTaskInput) -> list[dict[str, str]]:
     return warnings
 
 
+def _validated_product_image_path(input_asset_validation: dict[str, Any] | None) -> Path | None:
+    if not isinstance(input_asset_validation, dict):
+        return None
+    product_image = input_asset_validation.get("product_image")
+    if not isinstance(product_image, dict):
+        return None
+    if product_image.get("validation_status") != "passed":
+        return None
+    local_path = product_image.get("local_path")
+    if not local_path:
+        return None
+    return Path(str(local_path))
+
 def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateRequest:
     prompt_overrides = parameters.get("prompt_overrides")
     if not isinstance(prompt_overrides, dict):
@@ -349,6 +363,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             prompt,
             generate_payload.size,
             generate_payload.output_format,
+            product_image_path=_validated_product_image_path(input_asset_validation),
         )
         result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path, asset_key=task.output.assetKey if task.output else None)
         result_url = f"/outputs/{task.jobId}/{image_path.name}"
@@ -451,6 +466,8 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest) -> None:
         record.message = "Logo 处理失败。"
         record.error = str(exc)
         save_task(record)
+
+
 
 
 
