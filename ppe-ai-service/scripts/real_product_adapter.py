@@ -13,6 +13,40 @@ DEFAULT_BASE_URL = "http://129.204.115.36:9531/api"
 DEFAULT_SERVICE_URL = "http://127.0.0.1:8000"
 
 
+PRODUCT_PROFILES = {
+    "helmet": {
+        "keywords": ["安全帽", "头部", "矿帽", "头盔"],
+        "scene_hint": "中性浅灰产品摄影背景，少量现代工厂安全生产氛围",
+        "product_focus": "单个工业安全帽，帽壳轮廓清晰，正面或三分之二角度展示，材质细节清楚",
+    },
+    "gloves": {
+        "keywords": ["手套", "手部"],
+        "scene_hint": "中性浅灰产品摄影背景，少量工业仓储和生产线安全作业氛围",
+        "product_focus": "一副防护手套作为唯一主体，掌面和纹理清晰，平铺或轻微立体摆放",
+    },
+    "face": {
+        "keywords": ["面罩", "口罩", "呼吸", "面部"],
+        "scene_hint": "中性浅灰产品摄影背景，少量洁净车间安全防护氛围",
+        "product_focus": "单个防护面罩或面部防护产品，透明部件清晰，边缘和结构完整",
+    },
+    "eyewear": {
+        "keywords": ["护目镜", "眼镜", "眼部", "防护镜"],
+        "scene_hint": "中性浅灰产品摄影背景，少量实验室或工业安全检测氛围",
+        "product_focus": "单个护目镜或防护眼镜，镜片透明，镜框轮廓清晰，产品居中",
+    },
+    "vest": {
+        "keywords": ["反光", "背心", "身体", "防护服", "雨衣"],
+        "scene_hint": "中性浅灰产品摄影背景，少量施工现场安全作业氛围",
+        "product_focus": "单件反光背心或身体防护用品，平整展开，反光条和颜色清晰",
+    },
+    "fall": {
+        "keywords": ["坠落", "安全带", "连接件"],
+        "scene_hint": "中性浅灰产品摄影背景，少量高空作业安全防护氛围",
+        "product_focus": "单个高空防护装备或连接件，结构清楚，金属和织带细节清晰",
+    },
+}
+
+
 def _request_json(url: str, method: str = "GET", data: dict[str, Any] | None = None) -> dict[str, Any]:
     body = None
     headers = {"Accept": "application/json"}
@@ -45,18 +79,19 @@ def _category_path(product: dict[str, Any]) -> str:
 
 
 def _default_scene(category_path: str, product_name: str) -> str:
+    profile = _product_profile(category_path, product_name)
+    return f"{profile['scene_hint']}，场景只作为风格暗示，不绘制完整工厂、人物或复杂环境"
+
+
+def _product_profile(category_path: str, product_name: str) -> dict[str, str]:
     text = f"{category_path} {product_name}"
-    if any(key in text for key in ["安全帽", "头部", "矿帽"]):
-        return "现代化工厂车间，工业安全生产场景"
-    if any(key in text for key in ["手套", "手部"]):
-        return "工业仓库和生产线作业场景"
-    if any(key in text for key in ["口罩", "呼吸", "面罩"]):
-        return "洁净工业车间和安全防护展示场景"
-    if any(key in text for key in ["雨衣", "反光", "身体", "防护服"]):
-        return "施工现场和户外安全作业场景"
-    if any(key in text for key in ["坠落", "安全带", "连接件"]):
-        return "高空作业安全防护场景"
-    return "现代工业场景，干净商业产品展示背景"
+    for profile in PRODUCT_PROFILES.values():
+        if any(keyword in text for keyword in profile["keywords"]):
+            return profile
+    return {
+        "scene_hint": "中性浅灰产品摄影背景，少量现代工业安全防护氛围",
+        "product_focus": "单个 PPE 安全防护产品作为唯一主体，产品轮廓清晰，材质细节清楚",
+    }
 
 
 def _clean_product_name(name: str) -> str:
@@ -78,14 +113,58 @@ def _colors(product: dict[str, Any]) -> list[str]:
     return [str(item).strip() for item in colors if str(item).strip()]
 
 
+def _style_prompt(product_focus: str, colors: list[str]) -> str:
+    color_text = f"主色参考：{'、'.join(colors)}。" if colors else ""
+    return (
+        "真实商业产品摄影风格，single product, product-centered, close-up studio product photo. "
+        f"{color_text}{product_focus}。"
+        "干净白色或浅灰背景，自然阴影，专业布光，清晰对焦，高细节，B2B 产品目录图。"
+        "不要文字、不要标签、不要水印、不要海报拼贴、不要网页截图、不要多人或人物佩戴、不要复杂工厂背景。"
+    )
+
+
+def _presentation_requirements(product_focus: str) -> list[str]:
+    return [
+        "exactly one main PPE product",
+        "standalone product, not worn by a person",
+        "centered foreground product composition",
+        "plain white or light gray studio background",
+        "sharp focus, realistic material details",
+        product_focus,
+    ]
+
+
+def _generation_constraints() -> list[str]:
+    return [
+        "no text",
+        "no watermark",
+        "no logo unless provided later",
+        "no collage",
+        "no website screenshot",
+        "no multiple panels",
+        "no person",
+        "no face",
+        "no worker wearing the product",
+        "no full factory room",
+        "no machinery as main subject",
+        "no duplicated products",
+    ]
+
+
 def _to_generate_payload(product: dict[str, Any]) -> dict[str, Any]:
     product_name = _clean_product_name(str(product.get("product_name") or product.get("goods_name") or "PPE 安全防护用品"))
     category = _category_path(product)
     colors = _colors(product)
+    profile = _product_profile(category, product_name)
+    product_focus = profile["product_focus"]
 
     prompt_overrides: dict[str, Any] = {
         "goal": "展示 PPE 产品的专业、安全、可靠",
         "category_path": category,
+        "product_focus": product_focus,
+        "presentation_requirements": _presentation_requirements(product_focus),
+        "generation_constraints": _generation_constraints(),
+        "negative_hints": ", ".join(_generation_constraints()),
         "goods_id": product.get("goods_id"),
         "goods_no": product.get("goods_no"),
         "has_files": product.get("has_files"),
@@ -99,7 +178,7 @@ def _to_generate_payload(product: dict[str, Any]) -> dict[str, Any]:
         "product_name": product_name,
         "product_category": category,
         "scene": _default_scene(category, product_name),
-        "style": "真实商业产品图风格，单个产品主体，干净背景，专业安全防护用品展示",
+        "style": _style_prompt(product_focus, colors),
         "size": "512x512",
         "prompt_overrides": prompt_overrides,
         "output_format": "png",
