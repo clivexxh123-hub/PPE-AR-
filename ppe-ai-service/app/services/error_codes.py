@@ -1,5 +1,7 @@
 from pydantic import ValidationError
 
+from app.services.storage_service import StorageUploadError
+
 
 AI_INPUT_INVALID = "AI_400_INPUT_INVALID"
 AI_NETWORK_RETRYABLE = "AI_502_NETWORK_RETRYABLE"
@@ -12,6 +14,8 @@ COMMON_INTERNAL = "COMMON_500_INTERNAL"
 def map_exception_to_error(exc: Exception) -> tuple[str, str, bool]:
     message = str(exc) or exc.__class__.__name__
     lowered = message.lower()
+    if isinstance(exc, StorageUploadError):
+        return AI_NETWORK_RETRYABLE, message, True
     if isinstance(exc, (ValueError, ValidationError)):
         return AI_INPUT_INVALID, message, False
     if "timeout" in lowered or "timed out" in lowered or "\u8d85\u65f6" in message:

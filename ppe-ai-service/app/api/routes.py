@@ -15,6 +15,7 @@ from app.services.generation_engine import generate_ai_image
 from app.services.input_adapter import resolve_image_source, save_upload
 from app.services.logo_service import normalize_logo
 from app.services.prompt_templates import build_prompt
+from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
 
 router = APIRouter()
@@ -194,6 +195,7 @@ def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateReque
 def _business_extra(
     task: GenerationTaskInput,
     result: TaskResult | None = None,
+    storage_result: StorageUploadResult | None = None,
     local_result_url: str | None = None,
     local_output_path: str | None = None,
     error_code: str | None = None,
@@ -221,9 +223,9 @@ def _business_extra(
                 "logo_image": logo_image_url,
             },
             "asset_warnings": _asset_warnings(task),
-            "storage_backend": "local",
-            "oss_uploaded": False,
-            "oss_pending": True,
+            "storage_backend": storage_result.storage_backend if storage_result else settings.storage_backend,
+            "oss_uploaded": storage_result.uploaded if storage_result else False,
+            "oss_pending": storage_result.pending if storage_result else True,
             "local_result_url": local_result_url,
             "local_output_path": local_output_path,
         }
@@ -231,6 +233,10 @@ def _business_extra(
     if result is not None:
         payload["business_result"] = result.model_dump(mode="json")
         payload["business_protocol"]["assetKey"] = result.assetKey
+    if storage_result is not None:
+        payload["business_storage"] = storage_result.model_dump(mode="json")
+        payload["business_protocol"]["local_result_url"] = storage_result.local_url
+        payload["business_protocol"]["local_output_path"] = storage_result.local_path
     if error_code or error_message:
         payload["business_error"] = {
             "errorCode": error_code,
@@ -328,18 +334,19 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             generate_payload.output_format,
         )
         result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path)
+        result_url = f"/outputs/{task.jobId}/{image_path.name}"
+        storage_result = upload_result(image_path, result.assetKey, local_url=result_url)
         record.status = TaskStatus.succeeded
         record.message = f"业务 AI 图片已生成，当前使用 {engine} 引擎。"
         record.output_path = str(image_path)
         record.metadata_path = str(metadata_path)
-        record.result_url = f"/outputs/{task.jobId}/{image_path.name}"
+        record.result_url = result_url
         record.metadata_url = f"/outputs/{task.jobId}/{metadata_path.name}"
         callback_result = await _report_business_event(task, TaskStatus.succeeded, started_at, progress=100, result=result)
         extra = _business_extra(
             task,
             result=result,
-            local_result_url=record.result_url,
-            local_output_path=record.output_path,
+            storage_result=storage_result,
             callback_result=callback_result,
         )
         _append_output_metadata(metadata_path, extra)
