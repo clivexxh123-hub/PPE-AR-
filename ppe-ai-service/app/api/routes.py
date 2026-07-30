@@ -218,12 +218,21 @@ def _business_extra(
             "inputAssets": [asset.model_dump(mode="json") for asset in task.inputAssets],
             "inputAssetsByRole": _assets_by_role(task),
             "raw_callback": task.callback,
-            "callback_source": "TASK_CENTER_BASE_URL",
+            "callback_source": "GenerationTaskInput.callback",
             "parameters": task.parameters,
             "image_urls": {
                 "product_image": product_image_url,
                 "logo_image": logo_image_url,
             },
+            "output": {
+                "assetKey": task.output.assetKey,
+                "method": task.output.method,
+                "requiredHeaders": task.output.requiredHeaders,
+                "expiresAt": task.output.expiresAt,
+                "uploadUrl_present": True,
+            }
+            if task.output
+            else None,
             "input_asset_validation": input_asset_validation or {},
             "asset_warnings": _asset_warnings(task),
             "storage_backend": storage_result.storage_backend if storage_result else settings.storage_backend,
@@ -310,7 +319,7 @@ async def _report_business_event(
         workflowVersion=task.workflowVersion,
         result=result,
     )
-    return await send_worker_callback(settings.task_center_base_url, event)
+    return await send_worker_callback(task.callback, event)
 
 
 async def _run_business_generate_task(task: GenerationTaskInput) -> None:
@@ -341,9 +350,9 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             generate_payload.size,
             generate_payload.output_format,
         )
-        result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path)
+        result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path, asset_key=task.output.assetKey if task.output else None)
         result_url = f"/outputs/{task.jobId}/{image_path.name}"
-        storage_result = upload_result(image_path, result.assetKey, local_url=result_url)
+        storage_result = await upload_result(image_path, result.assetKey, local_url=result_url, output=task.output)
         record.status = TaskStatus.succeeded
         record.message = f"业务 AI 图片已生成，当前使用 {engine} 引擎。"
         record.output_path = str(image_path)
@@ -442,5 +451,6 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest) -> None:
         record.message = "Logo 处理失败。"
         record.error = str(exc)
         save_task(record)
+
 
 
