@@ -12,6 +12,7 @@ from app.services.asset_result import build_business_task_result
 from app.services.callback_service import send_worker_callback
 from app.services.error_codes import map_exception_to_error
 from app.services.generation_engine import generate_ai_image
+from app.services.image_asset_service import validate_generate_request_images
 from app.services.input_adapter import resolve_image_source, save_upload
 from app.services.logo_service import normalize_logo
 from app.services.prompt_templates import build_prompt
@@ -202,6 +203,7 @@ def _business_extra(
     error_message: str | None = None,
     retryable: bool | None = None,
     callback_result: dict[str, Any] | None = None,
+    input_asset_validation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     product_image_url = _image_url_from_parameter(task.parameters, "product_image")
     logo_image_url = _image_url_from_parameter(task.parameters, "logo_image")
@@ -222,6 +224,7 @@ def _business_extra(
                 "product_image": product_image_url,
                 "logo_image": logo_image_url,
             },
+            "input_asset_validation": input_asset_validation or {},
             "asset_warnings": _asset_warnings(task),
             "storage_backend": storage_result.storage_backend if storage_result else settings.storage_backend,
             "oss_uploaded": storage_result.uploaded if storage_result else False,
@@ -230,6 +233,8 @@ def _business_extra(
             "local_output_path": local_output_path,
         }
     }
+    if input_asset_validation is not None:
+        payload["input_asset_validation"] = input_asset_validation
     if result is not None:
         payload["business_result"] = result.model_dump(mode="json")
         payload["business_protocol"]["assetKey"] = result.assetKey
@@ -310,6 +315,7 @@ async def _report_business_event(
 
 async def _run_business_generate_task(task: GenerationTaskInput) -> None:
     started_at = time.monotonic()
+    input_asset_validation: dict[str, Any] | None = None
     record = load_task(task.jobId)
     if record is None:
         return
@@ -320,6 +326,8 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         save_task(record, extra=_business_extra(task, callback_result=callback_result))
 
         generate_payload = _parameters_to_generate_request(task.parameters)
+        input_asset_validation = await validate_generate_request_images(generate_payload)
+        save_task(record, extra=_business_extra(task, callback_result=callback_result, input_asset_validation=input_asset_validation))
         prompt = build_prompt(
             product_name=generate_payload.product_name,
             product_category=generate_payload.product_category,
@@ -348,10 +356,13 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             result=result,
             storage_result=storage_result,
             callback_result=callback_result,
+            input_asset_validation=input_asset_validation,
         )
         _append_output_metadata(metadata_path, extra)
         save_task(record, extra=extra)
     except Exception as exc:
+        if input_asset_validation is None:
+            input_asset_validation = getattr(exc, "validation_result", None)
         error_code, error_message, retryable = map_exception_to_error(exc)
         record.status = TaskStatus.failed
         record.message = "业务 AI 图片生成失败。"
@@ -372,6 +383,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 error_message=error_message,
                 retryable=retryable,
                 callback_result=callback_result,
+                input_asset_validation=input_asset_validation,
             ),
         )
 
@@ -430,3 +442,5 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest) -> None:
         record.message = "Logo 处理失败。"
         record.error = str(exc)
         save_task(record)
+
+
