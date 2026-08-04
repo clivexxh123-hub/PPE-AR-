@@ -15,7 +15,7 @@ from app.services.error_codes import map_exception_to_error
 from app.services.generation_engine import generate_ai_image
 from app.services.image_asset_service import validate_generate_request_images
 from app.services.input_adapter import resolve_image_source, save_upload
-from app.services.logo_service import normalize_logo
+from app.services.logo_service import normalize_logo, render_printed_design
 from app.services.prompt_templates import build_prompt
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
@@ -94,9 +94,9 @@ async def remove_logo_background(payload: LogoPlaceRequest, background_tasks: Ba
 async def place_logo(payload: LogoPlaceRequest, background_tasks: BackgroundTasks) -> TaskResponse:
     record = create_task("logo.place", payload.model_dump(mode="json"))
     if payload.sync:
-        await _run_logo_task(record.task_id, payload)
+        await _run_logo_task(record.task_id, payload, operation="place")
     else:
-        background_tasks.add_task(_run_logo_task, record.task_id, payload)
+        background_tasks.add_task(_run_logo_task, record.task_id, payload, "place")
     return to_response(load_task(record.task_id) or record)
 
 
@@ -444,7 +444,7 @@ async def _run_generate_task(task_id: str, payload: GenerateRequest) -> None:
         save_task(record)
 
 
-async def _run_logo_task(task_id: str, payload: LogoPlaceRequest) -> None:
+async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str = "place") -> None:
     record = load_task(task_id)
     if record is None:
         return
@@ -453,7 +453,22 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest) -> None:
         record.message = "正在处理 Logo 占位流程。"
         save_task(record)
         logo_path = await resolve_image_source(payload.logo_image)
-        image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
+        if operation == "place":
+            base_path = await resolve_image_source(payload.base_image)
+            if base_path is None:
+                image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
+            else:
+                image_path, metadata_path = render_printed_design(
+                    task_id,
+                    base_path,
+                    logo_path,
+                    position_x_ratio=payload.position_x_ratio,
+                    position_y_ratio=payload.position_y_ratio,
+                    logo_width_ratio=payload.logo_width_ratio or payload.scale,
+                    opacity=payload.opacity,
+                )
+        else:
+            image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
         record.status = TaskStatus.succeeded
         record.message = "Logo 占位处理已完成。后续会接入真实抠图和贴图逻辑。"
         record.output_path = str(image_path)
