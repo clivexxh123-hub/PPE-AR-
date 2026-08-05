@@ -56,6 +56,7 @@ def _build_task(job_id: str, base_path: Path, logo_path: Path | None) -> Generat
         parameters["logo_image"] = {"local_path": str(logo_path)}
     return GenerationTaskInput(
         jobId=job_id,
+        taskType="image_generation",
         tenantId="smoke-tenant",
         traceId=f"trace-{job_id}",
         modelProfileId="smoke-model",

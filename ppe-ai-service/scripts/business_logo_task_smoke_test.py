@@ -17,16 +17,26 @@ from app.main import app
 OUTPUT_ROOT = Path(r"D:\Don't Click it\JOB\XVison\PPE_AI\output\business_logo_task_smoke")
 
 
-def _task_payload(job_id: str, operation: str, parameters: dict) -> dict:
-    return {
+def _task_payload(
+    job_id: str,
+    operation: str | None,
+    parameters: dict,
+    *,
+    task_type: str | None = None,
+) -> dict:
+    payload = {
         "jobId": job_id,
-        "type": operation,
         "tenantId": "local-smoke",
         "traceId": f"trace-{job_id}",
         "modelProfileId": "local-test-profile",
         "workflowVersion": "local-test-v1",
         "parameters": {"sync": True, **parameters},
     }
+    if operation is not None:
+        payload["type"] = operation
+    if task_type is not None:
+        payload["taskType"] = task_type
+    return payload
 
 
 def main() -> None:
@@ -111,6 +121,76 @@ def main() -> None:
             )
             assert generation.status_code == 200, generation.text
             assert generation.json()["status"] == "succeeded"
+
+            for operation, parameters in (
+                ("logo_remove_bg", {"logo_image": {"local_path": str(logo_path)}}),
+                (
+                    "print_render",
+                    {
+                        "base_image": {"local_path": str(base_path)},
+                        "logo_image": {"local_path": str(logo_path)},
+                        "position_x_ratio": 0.5,
+                        "position_y_ratio": 0.5,
+                        "logo_width_ratio": 0.25,
+                        "opacity": 0.9,
+                    },
+                ),
+                (
+                    "image_generation",
+                    {
+                        "product_name": "safety helmet",
+                        "product_category": "PPE/head protection",
+                        "scene": "studio",
+                        "style": "commercial product photo",
+                        "size": "512x512",
+                        "output_format": "png",
+                    },
+                ),
+            ):
+                alias_response = client.post(
+                    "/ai/tasks",
+                    json=_task_payload(f"smoke-task-type-{operation}", None, parameters, task_type=operation),
+                )
+                assert alias_response.status_code == 200, alias_response.text
+                assert alias_response.json()["status"] == "succeeded"
+
+            matching = client.post(
+                "/ai/tasks",
+                json=_task_payload(
+                    "smoke-matching-task-type",
+                    "logo_remove_bg",
+                    {"logo_image": {"local_path": str(logo_path)}},
+                    task_type="logo_remove_bg",
+                ),
+            )
+            assert matching.status_code == 200, matching.text
+            assert matching.json()["status"] == "succeeded"
+
+            conflict = client.post(
+                "/ai/tasks",
+                json=_task_payload(
+                    "smoke-conflicting-task-type",
+                    "logo_remove_bg",
+                    {"logo_image": {"local_path": str(logo_path)}},
+                    task_type="print_render",
+                ),
+            )
+            assert conflict.status_code == 422, conflict.text
+            assert "detail" in conflict.json()
+
+            missing_type = client.post(
+                "/ai/tasks",
+                json=_task_payload("smoke-missing-task-type", None, {}),
+            )
+            assert missing_type.status_code == 422, missing_type.text
+            assert "detail" in missing_type.json()
+
+            unknown = client.post(
+                "/ai/tasks",
+                json=_task_payload("smoke-unknown-task-type", None, {}, task_type="unknown_task"),
+            )
+            assert unknown.status_code == 422, unknown.text
+            assert "detail" in unknown.json()
         print("BUSINESS_LOGO_TASK_SMOKE_OK")
     finally:
         settings.output_dir = original_output_dir
