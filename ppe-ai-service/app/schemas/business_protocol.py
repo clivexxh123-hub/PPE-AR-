@@ -1,6 +1,6 @@
 ﻿from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from app.schemas.tasks import TaskStatus
 
@@ -68,7 +68,6 @@ class GenerationTaskInput(BaseModel):
 
     jobId: str = Field(description="业务任务 ID。")
     type: Literal["image_generation", "logo_remove_bg", "print_render"] = Field(
-        default="image_generation",
         description="任务类型：营销图生成、Logo 简单背景抠除或基础印刷设计图合成。",
     )
     tenantId: str = Field(description="租户 ID。")
@@ -80,6 +79,25 @@ class GenerationTaskInput(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict, description="生成参数，包含产品信息以及 product_image.url / logo_image.url。")
     callback: str | None = Field(default=None, description="HTTP(S) 回调地址；缺失或不可达不阻塞本地结果记录。")
     output: TaskOutputSpec | None = Field(default=None, description="业务端提供的结果上传配置；正式联调必须提供。")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_task_type(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        payload = dict(value)
+        has_type = payload.get("type") is not None
+        has_task_type = payload.get("taskType") is not None
+
+        if has_type and has_task_type and payload["type"] != payload["taskType"]:
+            raise ValueError("type 与 taskType 同时传入时必须保持一致。")
+        if not has_type and has_task_type:
+            payload["type"] = payload["taskType"]
+
+        # taskType 仅作为业务输入兼容别名；内部统一只使用 type。
+        payload.pop("taskType", None)
+        return payload
 
     @field_validator("jobId", "tenantId", "traceId", "modelProfileId", "workflowVersion")
     @classmethod
