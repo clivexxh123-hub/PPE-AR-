@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.schemas.business_protocol import TaskOutputSpec
+from app.services.url_security import redact_headers, validate_public_http_url
 
 
 class StorageUploadError(RuntimeError):
@@ -56,6 +57,7 @@ async def upload_result(
     if output is not None:
         if output.method != "PUT":
             raise StorageInputError(f"不支持的上传方法：{output.method}")
+        validate_public_http_url(str(output.uploadUrl), purpose="uploadUrl")
         headers = _normalize_headers(output.requiredHeaders)
         try:
             file_bytes = local_path.read_bytes()
@@ -80,7 +82,7 @@ async def upload_result(
             local_path=str(local_path),
             local_url=local_url,
             method=output.method,
-            required_headers=headers,
+            required_headers=redact_headers(headers),
             upload_url_present=True,
             expiresAt=output.expiresAt,
             status_code=response.status_code,

@@ -19,6 +19,7 @@ from app.services.logo_service import normalize_logo, render_printed_design
 from app.services.prompt_templates import build_prompt
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
+from app.services.url_security import redact_headers, redact_sensitive_data
 
 router = APIRouter()
 
@@ -59,7 +60,8 @@ async def generate_image(payload: GenerateRequest, background_tasks: BackgroundT
     tags=["AI 图片生成"],
 )
 async def create_business_ai_task(payload: GenerationTaskInput, background_tasks: BackgroundTasks) -> BusinessTaskResponse:
-    record = create_task("ai.business_generate", payload.model_dump(mode="json"), task_id=payload.jobId)
+    request_payload = redact_sensitive_data(payload.model_dump(mode="json"))
+    record = create_task("ai.business_generate", request_payload, task_id=payload.jobId)
     save_task(record, extra=_business_extra(payload))
     if bool(payload.parameters.get("sync", False)):
         await _run_business_generate_task(payload)
@@ -78,9 +80,9 @@ async def create_business_ai_task(payload: GenerationTaskInput, background_tasks
 async def remove_logo_background(payload: LogoPlaceRequest, background_tasks: BackgroundTasks) -> TaskResponse:
     record = create_task("logo.remove_bg", payload.model_dump(mode="json"))
     if payload.sync:
-        await _run_logo_task(record.task_id, payload)
+        await _run_logo_task(record.task_id, payload, operation="remove_bg")
     else:
-        background_tasks.add_task(_run_logo_task, record.task_id, payload)
+        background_tasks.add_task(_run_logo_task, record.task_id, payload, "remove_bg")
     return to_response(load_task(record.task_id) or record)
 
 
@@ -233,7 +235,7 @@ def _business_extra(
             "inputAssetsByRole": _assets_by_role(task),
             "raw_callback": task.callback,
             "callback_source": "GenerationTaskInput.callback",
-            "parameters": task.parameters,
+            "parameters": redact_sensitive_data(task.parameters),
             "image_urls": {
                 "product_image": product_image_url,
                 "logo_image": logo_image_url,
@@ -241,7 +243,7 @@ def _business_extra(
             "output": {
                 "assetKey": task.output.assetKey,
                 "method": task.output.method,
-                "requiredHeaders": task.output.requiredHeaders,
+                "requiredHeaders": redact_headers(task.output.requiredHeaders),
                 "expiresAt": task.output.expiresAt,
                 "uploadUrl_present": True,
             }
@@ -481,7 +483,6 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
         record.message = "Logo 处理失败。"
         record.error = str(exc)
         save_task(record)
-
 
 
 

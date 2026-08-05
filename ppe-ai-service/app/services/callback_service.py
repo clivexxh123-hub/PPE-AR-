@@ -3,6 +3,7 @@
 import httpx
 
 from app.schemas.business_protocol import WorkerCallbackEvent
+from app.services.url_security import UnsafeUrlError, validate_public_http_url
 
 
 async def send_worker_callback(callback_url: str | None, event: WorkerCallbackEvent) -> dict[str, Any]:
@@ -23,6 +24,7 @@ async def send_worker_callback(callback_url: str | None, event: WorkerCallbackEv
         }
 
     try:
+        validate_public_http_url(callback_url, purpose="callback")
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(callback_url, json=event.model_dump(mode="json", exclude_none=True))
         return {
@@ -31,6 +33,14 @@ async def send_worker_callback(callback_url: str | None, event: WorkerCallbackEv
             "callback": callback_url,
             "status_code": response.status_code,
             "body": response.text[:500],
+        }
+    except UnsafeUrlError as exc:
+        return {
+            "sent": False,
+            "callback_skipped": False,
+            "callback": callback_url,
+            "security_blocked": True,
+            "error": str(exc),
         }
     except Exception as exc:
         return {
