@@ -1,0 +1,103 @@
+"""Run the local PPE AI regression suite with a compact final summary."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PYTHON = sys.executable
+
+
+@dataclass(frozen=True)
+class Check:
+    name: str
+    command: list[str]
+    engine: str | None = None
+
+
+def _run(check: Check) -> tuple[bool, str]:
+    environment = os.environ.copy()
+    if check.engine:
+        environment["AI_ENGINE"] = check.engine
+    result = subprocess.run(
+        check.command,
+        cwd=PROJECT_ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return True, ""
+    output = (result.stdout + result.stderr).strip().splitlines()
+    return False, "\n".join(output[-8:]) or f"exit code {result.returncode}"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="运行 PPE AI 一期本地回归测试。")
+    parser.add_argument(
+        "--comfyui",
+        action="store_true",
+        help="额外执行一次真实 ComfyUI 的 /ai/generate 回归；需要先启动 ComfyUI。",
+    )
+    args = parser.parse_args()
+
+    checks = [
+        Check(
+            "Python 编译检查",
+            [
+                PYTHON,
+                "-m",
+                "compileall",
+                "-q",
+                "app",
+                "scripts/business_logo_task_smoke_test.py",
+                "scripts/logo_remove_bg_smoke_test.py",
+                "scripts/printed_design_generation_smoke_test.py",
+                "scripts/security_smoke_test.py",
+            ],
+        ),
+        Check("/ai/generate mock 回归", [PYTHON, "scripts/api_smoke_test.py"], engine="mock"),
+        Check("统一 /ai/tasks 回归", [PYTHON, "scripts/business_logo_task_smoke_test.py"], engine="mock"),
+        Check("Logo 抠图回归", [PYTHON, "scripts/logo_remove_bg_smoke_test.py"], engine="mock"),
+        Check("printed_design 到 image_generation 回归", [PYTHON, "scripts/printed_design_generation_smoke_test.py"], engine="mock"),
+        Check("metadata 脱敏与 SSRF 防护", [PYTHON, "scripts/security_smoke_test.py"], engine="mock"),
+        Check("Git diff 检查", ["git", "diff", "--check"]),
+    ]
+    skipped = []
+    if args.comfyui:
+        checks.append(Check("/ai/generate 真实 ComfyUI 回归", [PYTHON, "scripts/api_smoke_test.py"], engine="comfyui"))
+    else:
+        skipped.append("/ai/generate 真实 ComfyUI 回归（使用 --comfyui 启用）")
+
+    passed: list[str] = []
+    failed: list[tuple[str, str]] = []
+    for check in checks:
+        ok, detail = _run(check)
+        if ok:
+            passed.append(check.name)
+        else:
+            failed.append((check.name, detail))
+
+    print("\nPPE_AI_REGRESSION_SUMMARY")
+    print(f"PASSED ({len(passed)}):")
+    for name in passed:
+        print(f"  - {name}")
+    print(f"FAILED ({len(failed)}):")
+    for name, detail in failed:
+        print(f"  - {name}")
+        print(f"    {detail}")
+    print(f"SKIPPED ({len(skipped)}):")
+    for name in skipped:
+        print(f"  - {name}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
