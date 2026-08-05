@@ -74,7 +74,7 @@ async def create_business_ai_task(payload: GenerationTaskInput, background_tasks
     "/logo/remove-bg",
     response_model=TaskResponse,
     summary="Logo 透明底处理",
-    description="将 Logo 规范化为透明 PNG 画布。当前为占位实现，后续会接入真实抠图模型。",
+    description="将常见简单背景的 Logo 处理为透明 PNG。复杂背景仍需要后续增强。",
     tags=["Logo 处理"],
 )
 async def remove_logo_background(payload: LogoPlaceRequest, background_tasks: BackgroundTasks) -> TaskResponse:
@@ -531,7 +531,7 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
         return
     try:
         record.status = TaskStatus.running
-        record.message = "正在处理 Logo 占位流程。"
+        record.message = "正在处理 Logo 图片。"
         save_task(record)
         logo_path = await resolve_image_source(payload.logo_image)
         if operation == "place":
@@ -551,7 +551,7 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
         else:
             image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
         record.status = TaskStatus.succeeded
-        record.message = "Logo 占位处理已完成。后续会接入真实抠图和贴图逻辑。"
+        record.message = "Logo 图片处理已完成。"
         record.output_path = str(image_path)
         record.metadata_path = str(metadata_path)
         record.result_url = f"/outputs/{task_id}/{image_path.name}"
@@ -562,6 +562,5 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
         record.message = "Logo 处理失败。"
         record.error = str(exc)
         save_task(record)
-
 
 

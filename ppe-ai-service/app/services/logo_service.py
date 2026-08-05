@@ -1,7 +1,7 @@
 ﻿from pathlib import Path
 
 import json
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw
 
 from app.core.config import ensure_storage_dirs, settings
 
@@ -76,26 +76,60 @@ def render_printed_design(
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     return image_path, metadata_path
 
+def _remove_simple_background(image: Image.Image, tolerance: int = 24) -> tuple[Image.Image, str]:
+    """Remove a border-connected, near-solid background without an AI model."""
+    rgba = image.convert("RGBA")
+    if rgba.getchannel("A").getextrema()[0] < 255:
+        return rgba, "preserved_existing_alpha"
+
+    rgb = rgba.convert("RGB")
+    filled = rgb.copy()
+    marker = (255, 0, 255)
+    width, height = filled.size
+    for point in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)):
+        ImageDraw.floodfill(filled, point, marker, thresh=tolerance)
+
+    marker_difference = ImageChops.difference(filled, Image.new("RGB", filled.size, marker))
+    background_alpha = marker_difference.convert("L").point(lambda value: 255 if value else 0)
+    rgba.putalpha(background_alpha)
+    return rgba, "border_flood_fill"
+
+
 def normalize_logo(task_id: str, logo_path: Path | None, output_format: str = "png") -> tuple[Path, Path]:
     ensure_storage_dirs()
     output_dir = settings.output_dir / task_id
     output_dir.mkdir(parents=True, exist_ok=True)
-    ext = output_format.lower().lstrip(".") or "png"
-    image_path = output_dir / f"logo_normalized.{ext}"
+    image_path = output_dir / "logo_normalized.png"
     metadata_path = output_dir / "metadata.json"
 
-    if logo_path and logo_path.exists():
-        image = Image.open(logo_path).convert("RGBA")
-    else:
-        image = Image.new("RGBA", (512, 512), (255, 255, 255, 0))
+    if logo_path is None or not logo_path.exists():
+        raise ValueError(f"Logo image does not exist: {logo_path}")
+    try:
+        with Image.open(logo_path) as source:
+            image, background_method = _remove_simple_background(source)
+    except OSError as exc:
+        raise ValueError(f"Unable to read logo image: {exc}") from exc
 
     image.thumbnail((512, 512))
     canvas = Image.new("RGBA", (512, 512), (255, 255, 255, 0))
     canvas.alpha_composite(image, ((512 - image.width) // 2, (512 - image.height) // 2))
-    canvas.save(image_path)
+    canvas.save(image_path, format="PNG")
     metadata_path.write_text(
-        '{\n  "engine": "logo-placeholder",\n  "note": "当前还没有接入真实 Logo 抠图模型。"\n}\n',
+        json.dumps(
+            {
+                "engine": "pillow-simple-background-removal",
+                "input_path": str(logo_path),
+                "output_path": str(image_path),
+                "output_format": "png",
+                "has_alpha": True,
+                "background_method": background_method,
+                "output_width": canvas.width,
+                "output_height": canvas.height,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return image_path, metadata_path
-
