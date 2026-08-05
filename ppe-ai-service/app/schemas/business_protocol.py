@@ -67,7 +67,10 @@ class GenerationTaskInput(BaseModel):
     model_config = ConfigDict(title="业务图片生成任务输入")
 
     jobId: str = Field(description="业务任务 ID。")
-    type: Literal["image_generation"] = Field(default="image_generation", description="任务类型。")
+    type: Literal["image_generation", "logo_remove_bg", "print_render"] = Field(
+        default="image_generation",
+        description="任务类型：营销图生成、Logo 简单背景抠除或基础印刷设计图合成。",
+    )
     tenantId: str = Field(description="租户 ID。")
     traceId: str = Field(description="链路追踪 ID。")
     attempt: int = Field(default=0, ge=0, description="当前尝试次数。")
