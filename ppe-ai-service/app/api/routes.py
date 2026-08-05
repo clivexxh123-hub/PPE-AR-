@@ -191,6 +191,63 @@ def _validated_product_image_path(input_asset_validation: dict[str, Any] | None)
         return None
     return Path(str(local_path))
 
+
+def _validated_logo_image_path(input_asset_validation: dict[str, Any] | None) -> Path | None:
+    if not isinstance(input_asset_validation, dict):
+        return None
+    logo_image = input_asset_validation.get("logo_image")
+    if not isinstance(logo_image, dict):
+        return None
+    if logo_image.get("validation_status") != "passed":
+        return None
+    local_path = logo_image.get("local_path")
+    if not local_path:
+        return None
+    return Path(str(local_path))
+
+
+def _prepare_generation_input(
+    task: GenerationTaskInput,
+    input_asset_validation: dict[str, Any] | None,
+) -> tuple[Path | None, dict[str, Any]]:
+    product_image_path = _validated_product_image_path(input_asset_validation)
+    logo_image_path = _validated_logo_image_path(input_asset_validation)
+    if product_image_path is None or logo_image_path is None:
+        missing = []
+        if product_image_path is None:
+            missing.append("product_image")
+        if logo_image_path is None:
+            missing.append("logo_image")
+        return product_image_path, {
+            "printed_design_used": False,
+            "reason": f"missing_validated_{'_and_'.join(missing)}",
+        }
+
+    position_x_ratio = float(task.parameters.get("position_x_ratio", 0.5))
+    position_y_ratio = float(task.parameters.get("position_y_ratio", 0.5))
+    logo_width_ratio = float(task.parameters.get("logo_width_ratio", 0.25))
+    opacity = float(task.parameters.get("opacity", 1.0))
+    printed_design_path, printed_metadata_path = render_printed_design(
+        f"{task.jobId}-printed-design",
+        product_image_path,
+        logo_image_path,
+        position_x_ratio=position_x_ratio,
+        position_y_ratio=position_y_ratio,
+        logo_width_ratio=logo_width_ratio,
+        opacity=opacity,
+    )
+    return printed_design_path, {
+        "printed_design_used": True,
+        "path": str(printed_design_path),
+        "metadata_path": str(printed_metadata_path),
+        "product_image_path": str(product_image_path),
+        "logo_image_path": str(logo_image_path),
+        "position_x_ratio": position_x_ratio,
+        "position_y_ratio": position_y_ratio,
+        "logo_width_ratio": logo_width_ratio,
+        "opacity": opacity,
+    }
+
 def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateRequest:
     prompt_overrides = parameters.get("prompt_overrides")
     if not isinstance(prompt_overrides, dict):
@@ -220,6 +277,7 @@ def _business_extra(
     retryable: bool | None = None,
     callback_result: dict[str, Any] | None = None,
     input_asset_validation: dict[str, Any] | None = None,
+    printed_design: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     product_image_url = _image_url_from_parameter(task.parameters, "product_image")
     logo_image_url = _image_url_from_parameter(task.parameters, "logo_image")
@@ -250,6 +308,8 @@ def _business_extra(
             if task.output
             else None,
             "input_asset_validation": input_asset_validation or {},
+            "printed_design_used": bool(printed_design and printed_design.get("printed_design_used")),
+            "printed_design": printed_design,
             "asset_warnings": _asset_warnings(task),
             "storage_backend": storage_result.storage_backend if storage_result else settings.storage_backend,
             "oss_uploaded": storage_result.uploaded if storage_result else False,
@@ -260,6 +320,9 @@ def _business_extra(
     }
     if input_asset_validation is not None:
         payload["input_asset_validation"] = input_asset_validation
+    payload["printed_design_used"] = bool(printed_design and printed_design.get("printed_design_used"))
+    if printed_design is not None:
+        payload["printed_design"] = printed_design
     if result is not None:
         payload["business_result"] = result.model_dump(mode="json")
         payload["business_protocol"]["assetKey"] = result.assetKey
@@ -341,6 +404,10 @@ async def _report_business_event(
 async def _run_business_generate_task(task: GenerationTaskInput) -> None:
     started_at = time.monotonic()
     input_asset_validation: dict[str, Any] | None = None
+    printed_design: dict[str, Any] = {
+        "printed_design_used": False,
+        "reason": "not_processed",
+    }
     record = load_task(task.jobId)
     if record is None:
         return
@@ -353,6 +420,16 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         generate_payload = _parameters_to_generate_request(task.parameters)
         input_asset_validation = await validate_generate_request_images(generate_payload)
         save_task(record, extra=_business_extra(task, callback_result=callback_result, input_asset_validation=input_asset_validation))
+        generation_input_path, printed_design = _prepare_generation_input(task, input_asset_validation)
+        save_task(
+            record,
+            extra=_business_extra(
+                task,
+                callback_result=callback_result,
+                input_asset_validation=input_asset_validation,
+                printed_design=printed_design,
+            ),
+        )
         prompt = build_prompt(
             product_name=generate_payload.product_name,
             product_category=generate_payload.product_category,
@@ -365,7 +442,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             prompt,
             generate_payload.size,
             generate_payload.output_format,
-            product_image_path=_validated_product_image_path(input_asset_validation),
+            product_image_path=generation_input_path,
         )
         result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path, asset_key=task.output.assetKey if task.output else None)
         result_url = f"/outputs/{task.jobId}/{image_path.name}"
@@ -383,6 +460,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             storage_result=storage_result,
             callback_result=callback_result,
             input_asset_validation=input_asset_validation,
+            printed_design=printed_design,
         )
         _append_output_metadata(metadata_path, extra)
         save_task(record, extra=extra)
@@ -410,6 +488,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 retryable=retryable,
                 callback_result=callback_result,
                 input_asset_validation=input_asset_validation,
+                printed_design=printed_design,
             ),
         )
 
@@ -483,7 +562,6 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
         record.message = "Logo 处理失败。"
         record.error = str(exc)
         save_task(record)
-
 
 
 
