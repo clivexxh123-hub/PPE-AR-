@@ -1,0 +1,135 @@
+{
+  "notes": {
+    "replace_before_use": [
+      "将 example.com URL 替换为业务端可访问的真实 HTTPS URL。",
+      "将 uploadUrl 替换为业务端生成的 OSS PUT 预签名 URL。",
+      "assetKey、jobId、tenantId 和 traceId 应由业务端按实际任务生成。"
+    ]
+  },
+  "examples": {
+    "product_to_image_generation": {
+      "jobId": "gen_example_001",
+      "type": "image_generation",
+      "tenantId": "tenant_example",
+      "traceId": "trace_example_001",
+      "attempt": 0,
+      "modelProfileId": "sd15_ppe_product_v1",
+      "workflowVersion": "ppe-marketing-v1.0",
+      "inputAssets": [
+        {
+          "assetId": "asset_product_example_001",
+          "role": "product_reference",
+          "version": 1
+        }
+      ],
+      "parameters": {
+        "product_image": {
+          "url": "https://example.com/products/helmet.png"
+        },
+        "product_name": "工业安全帽",
+        "product_category": "个人防护/头部防护/安全帽",
+        "scene": "现代工厂车间",
+        "style": "真实商业产品图风格，单个产品，干净背景",
+        "size": "512x512",
+        "output_format": "png",
+        "prompt_overrides": {
+          "goal": "展示产品专业、安全、可靠"
+        }
+      },
+      "callback": "https://example.com/internal/v1/jobs/gen_example_001/events",
+      "output": {
+        "assetKey": "results/tenant_example/gen_example_001/attempt-0/result.png",
+        "uploadUrl": "https://example.com/oss/presigned-put-url",
+        "method": "PUT",
+        "requiredHeaders": {
+          "content-type": "image/png"
+        },
+        "expiresAt": "2026-08-10T18:00:00.000Z"
+      }
+    },
+    "product_logo_to_print_render": {
+      "jobId": "render_example_002",
+      "taskType": "print_render",
+      "tenantId": "tenant_example",
+      "traceId": "trace_example_002",
+      "attempt": 0,
+      "modelProfileId": "pillow_print_render_v1",
+      "workflowVersion": "print-render-v1.0",
+      "inputAssets": [
+        {
+          "assetId": "asset_product_example_002",
+          "role": "product_reference",
+          "version": 1
+        },
+        {
+          "assetId": "asset_logo_example_002",
+          "role": "logo",
+          "version": 1
+        }
+      ],
+      "parameters": {
+        "base_image": {
+          "url": "https://example.com/products/helmet-front.png"
+        },
+        "logo_image": {
+          "url": "https://example.com/logos/company-transparent.png"
+        },
+        "position_x_ratio": 0.5,
+        "position_y_ratio": 0.45,
+        "logo_width_ratio": 0.2,
+        "opacity": 1.0,
+        "output_format": "png"
+      },
+      "callback": "https://example.com/internal/v1/jobs/render_example_002/events",
+      "output": {
+        "assetKey": "results/tenant_example/render_example_002/attempt-0/result.png",
+        "uploadUrl": "https://example.com/oss/presigned-put-url",
+        "method": "PUT",
+        "requiredHeaders": {
+          "content-type": "image/png"
+        },
+        "expiresAt": "2026-08-10T18:00:00.000Z"
+      }
+    },
+    "printed_design_to_image_generation": {
+      "jobId": "gen_example_003",
+      "taskType": "image_generation",
+      "tenantId": "tenant_example",
+      "traceId": "trace_example_003",
+      "attempt": 0,
+      "modelProfileId": "sd15_ppe_product_v1",
+      "workflowVersion": "ppe-marketing-v1.0",
+      "inputAssets": [
+        {
+          "assetId": "asset_printed_design_example_003",
+          "role": "product_reference",
+          "version": 1
+        }
+      ],
+      "parameters": {
+        "product_image": {
+          "url": "https://example.com/results/render_example_002/printed_design.png"
+        },
+        "product_name": "工业安全帽",
+        "product_category": "个人防护/头部防护/安全帽",
+        "scene": "现代工厂车间",
+        "style": "真实商业产品图风格，单个产品，产品居中",
+        "size": "512x512",
+        "output_format": "png",
+        "prompt_overrides": {
+          "goal": "保留产品与印刷设计，生成营销展示图"
+        }
+      },
+      "callback": "https://example.com/internal/v1/jobs/gen_example_003/events",
+      "output": {
+        "assetKey": "results/tenant_example/gen_example_003/attempt-0/result.png",
+        "uploadUrl": "https://example.com/oss/presigned-put-url",
+        "method": "PUT",
+        "requiredHeaders": {
+          "content-type": "image/png"
+        },
+        "expiresAt": "2026-08-10T18:00:00.000Z"
+      }
+    }
+  }
+}
