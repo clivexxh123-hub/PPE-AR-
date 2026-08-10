@@ -61,6 +61,7 @@ def main() -> int:
                 "scripts/logo_remove_bg_smoke_test.py",
                 "scripts/printed_design_generation_smoke_test.py",
                 "scripts/security_smoke_test.py",
+                "scripts/async_task_lifecycle_smoke_test.py",
             ],
         ),
         Check("/ai/generate mock 回归", [PYTHON, "scripts/api_smoke_test.py"], engine="mock"),
@@ -68,6 +69,7 @@ def main() -> int:
         Check("Logo 抠图回归", [PYTHON, "scripts/logo_remove_bg_smoke_test.py"], engine="mock"),
         Check("printed_design 到 image_generation 回归", [PYTHON, "scripts/printed_design_generation_smoke_test.py"], engine="mock"),
         Check("metadata 脱敏与 SSRF 防护", [PYTHON, "scripts/security_smoke_test.py"], engine="mock"),
+        Check("异步任务状态回归", [PYTHON, "scripts/async_task_lifecycle_smoke_test.py"], engine="mock"),
         Check("Git diff 检查", ["git", "diff", "--check"]),
     ]
     skipped = []
