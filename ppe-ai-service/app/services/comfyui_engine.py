@@ -50,6 +50,7 @@ def _patch_workflow(
     size: str,
     generation_mode: str,
     comfyui_image_name: str | None = None,
+    negative_prompt: str | None = None,
 ) -> dict[str, Any]:
     width, height = _parse_size(size)
     positive_patched = False
@@ -58,6 +59,7 @@ def _patch_workflow(
     save_patched = False
     image_patched = comfyui_image_name is None
     denoise_patched = False
+    negative_prompt_text = negative_prompt or settings.comfyui_default_negative_prompt
 
     positive_node = _node(workflow, settings.comfyui_positive_node_id)
     if positive_node is not None:
@@ -66,7 +68,7 @@ def _patch_workflow(
 
     negative_node = _node(workflow, settings.comfyui_negative_node_id)
     if negative_node is not None:
-        negative_node.setdefault("inputs", {})["text"] = settings.comfyui_default_negative_prompt
+        negative_node.setdefault("inputs", {})["text"] = negative_prompt_text
         negative_patched = True
 
     latent_node = _node(workflow, settings.comfyui_latent_node_id)
@@ -98,7 +100,7 @@ def _patch_workflow(
             continue
 
         if positive_patched and not negative_patched and class_type == "CLIPTextEncode" and "text" in inputs:
-            inputs["text"] = settings.comfyui_default_negative_prompt
+            inputs["text"] = negative_prompt_text
             negative_patched = True
             continue
 
@@ -186,23 +188,39 @@ async def generate_comfyui_image(
     size: str,
     output_format: str = "png",
     product_image_path: Path | None = None,
+    generation_mode: str | None = None,
 ) -> tuple[Path, Path]:
     ensure_storage_dirs()
     output_dir = settings.output_dir / task_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    generation_mode = "image_to_image" if product_image_path is not None else "text_to_image"
+    requested_generation_mode = generation_mode or ("image_to_image" if product_image_path is not None else "text_to_image")
+    workflow_generation_mode = "image_to_image" if product_image_path is not None else "text_to_image"
     workflow_path = (
         settings.comfyui_image_to_image_workflow_path
-        if generation_mode == "image_to_image"
+        if workflow_generation_mode == "image_to_image"
         else settings.comfyui_text_to_image_workflow_path
+    )
+    negative_prompt = (
+        "deformed PPE, extra PPE, floating product, wrong body position, distorted face, extra limbs, "
+        "duplicate helmet, text, watermark, collage, low quality, unnatural pose"
+        if requested_generation_mode == "human_wearing"
+        else settings.comfyui_default_negative_prompt
     )
     timeout = httpx.Timeout(settings.comfyui_timeout_seconds)
     comfyui_image_name: str | None = None
     async with httpx.AsyncClient(base_url=settings.comfyui_base_url, timeout=timeout) as client:
         if product_image_path is not None:
             comfyui_image_name = await _upload_input_image(client, product_image_path, task_id)
-        workflow = _patch_workflow(_load_workflow(workflow_path), task_id, prompt, size, generation_mode, comfyui_image_name)
+        workflow = _patch_workflow(
+            _load_workflow(workflow_path),
+            task_id,
+            prompt,
+            size,
+            workflow_generation_mode,
+            comfyui_image_name,
+            negative_prompt=negative_prompt,
+        )
         queue_response = await client.post("/prompt", json={"prompt": workflow, "client_id": task_id})
         queue_response.raise_for_status()
         prompt_id = queue_response.json().get("prompt_id")
@@ -222,13 +240,14 @@ async def generate_comfyui_image(
     metadata = {
         "task_id": task_id,
         "engine": "comfyui",
-        "generation_mode": generation_mode,
+        "generation_mode": requested_generation_mode,
+        "human_wearing_used": requested_generation_mode == "human_wearing",
         "product_image_used": product_image_path is not None,
         "product_image_local_path": str(product_image_path) if product_image_path is not None else None,
         "comfyui_input_image": comfyui_image_name,
         "comfyui_base_url": settings.comfyui_base_url,
         "workflow_path": str(workflow_path),
-        "denoise": settings.comfyui_denoise if generation_mode == "image_to_image" else None,
+        "denoise": settings.comfyui_denoise if workflow_generation_mode == "image_to_image" else None,
         "prompt_id": prompt_id,
         "prompt": prompt,
         "size": size,

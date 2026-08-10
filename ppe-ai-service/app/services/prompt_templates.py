@@ -45,3 +45,24 @@ def build_prompt(
     if overrides:
         values.update({key: str(value) for key, value in overrides.items()})
     return Template(template_text).safe_substitute(values)
+
+
+def build_human_wearing_prompt(
+    product_name: str,
+    product_category: str,
+    scene: str,
+    style: str,
+    overrides: dict | None = None,
+) -> str:
+    """Build a PPE-wearing prompt without the product-only template constraints."""
+    prompt = (
+        f"Realistic commercial PPE marketing photo of a person wearing one {product_name}. "
+        f"PPE category: {product_category}. Correct product position on the body, "
+        f"preserve the PPE color, silhouette, and visible structure. "
+        f"Scene: {scene}. Style: {style}. Natural human pose, realistic lighting, sharp product details."
+    )
+    if overrides:
+        extra = " ".join(str(value) for value in overrides.values() if value)
+        if extra:
+            prompt = f"{prompt} {extra}."
+    return prompt

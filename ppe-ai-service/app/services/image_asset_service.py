@@ -18,6 +18,31 @@ class ImageAssetValidationError(ValueError):
         self.validation_result = validation_result or {}
 
 
+def validate_alpha_channel(path: Path, role: str) -> dict[str, Any]:
+    """Require a real transparent region for PPE reference compositing."""
+    try:
+        with Image.open(path) as image:
+            if "A" not in image.getbands() and "transparency" not in image.info:
+                raise ImageAssetValidationError(
+                    f"{role} 图片必须包含 alpha 透明通道。",
+                    {"validation_status": "failed", "has_alpha": False, "error": "alpha channel is missing"},
+                )
+            alpha_min, alpha_max = image.convert("RGBA").getchannel("A").getextrema()
+    except ImageAssetValidationError:
+        raise
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ImageAssetValidationError(
+            f"{role} 图片无法读取 alpha 通道：{exc}",
+            {"validation_status": "failed", "has_alpha": False, "error": str(exc)},
+        ) from exc
+    if alpha_min >= 255:
+        raise ImageAssetValidationError(
+            f"{role} 图片没有透明区域。",
+            {"validation_status": "failed", "has_alpha": True, "alpha_min": alpha_min, "alpha_max": alpha_max, "error": "alpha channel has no transparent pixels"},
+        )
+    return {"validation_status": "passed", "has_alpha": True, "alpha_min": alpha_min, "alpha_max": alpha_max}
+
+
 async def validate_generate_request_images(payload: GenerateRequest) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if payload.product_image is not None:
