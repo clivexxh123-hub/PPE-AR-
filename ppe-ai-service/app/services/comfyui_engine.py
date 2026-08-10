@@ -51,6 +51,7 @@ def _patch_workflow(
     generation_mode: str,
     comfyui_image_name: str | None = None,
     negative_prompt: str | None = None,
+    denoise: float | None = None,
 ) -> dict[str, Any]:
     width, height = _parse_size(size)
     positive_patched = False
@@ -116,7 +117,7 @@ def _patch_workflow(
             image_patched = True
 
         if not denoise_patched and generation_mode == "image_to_image" and class_type == "KSampler" and "denoise" in inputs:
-            inputs["denoise"] = settings.comfyui_denoise
+            inputs["denoise"] = settings.comfyui_denoise if denoise is None else denoise
             denoise_patched = True
 
         if not save_patched and class_type == "SaveImage":
@@ -196,6 +197,7 @@ async def generate_comfyui_image(
 
     requested_generation_mode = generation_mode or ("image_to_image" if product_image_path is not None else "text_to_image")
     workflow_generation_mode = "image_to_image" if product_image_path is not None else "text_to_image"
+    generation_denoise = 0.15 if requested_generation_mode == "human_wearing" else settings.comfyui_denoise
     workflow_path = (
         settings.comfyui_image_to_image_workflow_path
         if workflow_generation_mode == "image_to_image"
@@ -220,6 +222,7 @@ async def generate_comfyui_image(
             workflow_generation_mode,
             comfyui_image_name,
             negative_prompt=negative_prompt,
+            denoise=generation_denoise,
         )
         queue_response = await client.post("/prompt", json={"prompt": workflow, "client_id": task_id})
         queue_response.raise_for_status()
@@ -247,7 +250,7 @@ async def generate_comfyui_image(
         "comfyui_input_image": comfyui_image_name,
         "comfyui_base_url": settings.comfyui_base_url,
         "workflow_path": str(workflow_path),
-        "denoise": settings.comfyui_denoise if workflow_generation_mode == "image_to_image" else None,
+        "denoise": generation_denoise if workflow_generation_mode == "image_to_image" else None,
         "prompt_id": prompt_id,
         "prompt": prompt,
         "size": size,
