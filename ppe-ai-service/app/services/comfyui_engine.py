@@ -197,7 +197,13 @@ async def generate_comfyui_image(
 
     requested_generation_mode = generation_mode or ("image_to_image" if product_image_path is not None else "text_to_image")
     workflow_generation_mode = "image_to_image" if product_image_path is not None else "text_to_image"
-    generation_denoise = 0.15 if requested_generation_mode == "human_wearing" else settings.comfyui_denoise
+    generation_denoise = (
+        0.15
+        if requested_generation_mode == "human_wearing"
+        else settings.comfyui_scene_generation_denoise
+        if requested_generation_mode == "scene_generation"
+        else settings.comfyui_denoise
+    )
     workflow_path = (
         settings.comfyui_image_to_image_workflow_path
         if workflow_generation_mode == "image_to_image"
@@ -207,6 +213,9 @@ async def generate_comfyui_image(
         "deformed PPE, extra PPE, floating product, wrong body position, distorted face, extra limbs, "
         "duplicate helmet, text, watermark, collage, low quality, unnatural pose"
         if requested_generation_mode == "human_wearing"
+        else "deformed product, distorted product, extra products, duplicate products, multiple panels, collage, "
+        "text, typography, labels, watermark, logo, people, low quality, messy background"
+        if requested_generation_mode == "scene_generation"
         else settings.comfyui_default_negative_prompt
     )
     timeout = httpx.Timeout(settings.comfyui_timeout_seconds)
@@ -245,6 +254,7 @@ async def generate_comfyui_image(
         "engine": "comfyui",
         "generation_mode": requested_generation_mode,
         "human_wearing_used": requested_generation_mode == "human_wearing",
+        "scene_generation_used": requested_generation_mode == "scene_generation",
         "product_image_used": product_image_path is not None,
         "product_image_local_path": str(product_image_path) if product_image_path is not None else None,
         "comfyui_input_image": comfyui_image_name,

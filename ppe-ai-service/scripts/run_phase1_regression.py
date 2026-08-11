@@ -60,6 +60,7 @@ def main() -> int:
                 "scripts/business_logo_task_smoke_test.py",
                 "scripts/logo_remove_bg_smoke_test.py",
                 "scripts/printed_design_generation_smoke_test.py",
+                "scripts/scene_generation_smoke_test.py",
                 "scripts/security_smoke_test.py",
                 "scripts/async_task_lifecycle_smoke_test.py",
             ],
@@ -71,6 +72,7 @@ def main() -> int:
         Check("metadata 脱敏与 SSRF 防护", [PYTHON, "scripts/security_smoke_test.py"], engine="mock"),
         Check("异步任务状态回归", [PYTHON, "scripts/async_task_lifecycle_smoke_test.py"], engine="mock"),
         Check("Git diff 检查", ["git", "diff", "--check"]),
+        Check("scene_generation regression", [PYTHON, "scripts/scene_generation_smoke_test.py"], engine="mock"),
     ]
     skipped = []
     if args.comfyui:

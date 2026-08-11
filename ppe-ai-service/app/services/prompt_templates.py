@@ -66,3 +66,26 @@ def build_human_wearing_prompt(
         if extra:
             prompt = f"{prompt} {extra}."
     return prompt
+
+
+def build_scene_generation_prompt(
+    product_name: str,
+    product_category: str,
+    scene: str,
+    style: str,
+    overrides: dict | None = None,
+) -> str:
+    """Build a product-first marketing prompt for the scene_generation mode."""
+    prompt = (
+        f"Commercial PPE product marketing photo featuring exactly one {product_name}. "
+        f"PPE category: {product_category}. Preserve the reference product color, silhouette, "
+        f"and visible structure. The product is centered, sharp, and the clear primary subject. "
+        f"Marketing scene: {scene}. Style: {style}. "
+        "Use a realistic supporting background, professional lighting, and clean product-focused composition. "
+        "No text, labels, watermark, collage, duplicate products, or people."
+    )
+    if overrides:
+        extra = " ".join(str(value) for value in overrides.values() if value)
+        if extra:
+            prompt = f"{prompt} {extra}."
+    return prompt

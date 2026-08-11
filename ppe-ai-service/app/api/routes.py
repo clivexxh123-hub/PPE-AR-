@@ -22,7 +22,7 @@ from app.services.image_asset_service import (
 )
 from app.services.input_adapter import resolve_image_source, save_upload
 from app.services.logo_service import normalize_logo, render_printed_design
-from app.services.prompt_templates import build_human_wearing_prompt, build_prompt
+from app.services.prompt_templates import build_human_wearing_prompt, build_prompt, build_scene_generation_prompt
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
 from app.services.url_security import redact_headers, redact_sensitive_data
@@ -385,6 +385,9 @@ def _business_extra(
     logo_image_url = _image_url_from_parameter(task.parameters, "logo_image")
     generation_mode = str(task.parameters.get("generation_mode", "")).strip() or None
     human_wearing_used = bool(printed_design and printed_design.get("human_wearing_used"))
+    scene_generation_used = generation_mode == "scene_generation"
+    product_reference_used = _validated_product_image_path(input_asset_validation) is not None
+    denoise = settings.comfyui_scene_generation_denoise if scene_generation_used else None
     payload: dict[str, Any] = {
         "business_protocol": {
             "jobId": task.jobId,
@@ -400,6 +403,11 @@ def _business_extra(
             "callback_source": "GenerationTaskInput.callback",
             "generation_mode": generation_mode,
             "human_wearing_used": human_wearing_used,
+            "scene_generation_used": scene_generation_used,
+            "scene": str(task.parameters.get("scene", "")).strip() or None,
+            "style": str(task.parameters.get("style", "")).strip() or None,
+            "product_reference_used": product_reference_used,
+            "denoise": denoise,
             "parameters": redact_sensitive_data(task.parameters),
             "image_urls": {
                 "product_image": product_image_url,
@@ -430,6 +438,9 @@ def _business_extra(
     payload["printed_design_used"] = bool(printed_design and printed_design.get("printed_design_used"))
     payload["generation_mode"] = generation_mode
     payload["human_wearing_used"] = human_wearing_used
+    payload["scene_generation_used"] = scene_generation_used
+    payload["product_reference_used"] = product_reference_used
+    payload["denoise"] = denoise
     if printed_design is not None:
         payload["printed_design"] = printed_design
     if result is not None:
@@ -654,6 +665,8 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 task, generate_payload, input_asset_validation
             )
         else:
+            if generation_mode == "scene_generation" and _validated_product_image_path(input_asset_validation) is None:
+                raise ValueError("scene_generation 需要已校验通过的 parameters.product_image。")
             generation_input_path, printed_design = _prepare_generation_input(task, input_asset_validation)
         save_task(
             record,
@@ -664,7 +677,13 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 printed_design=printed_design,
             ),
         )
-        prompt_builder = build_human_wearing_prompt if generation_mode == "human_wearing" else build_prompt
+        prompt_builder = (
+            build_human_wearing_prompt
+            if generation_mode == "human_wearing"
+            else build_scene_generation_prompt
+            if generation_mode == "scene_generation"
+            else build_prompt
+        )
         prompt = prompt_builder(
             product_name=generate_payload.product_name,
             product_category=generate_payload.product_category,
@@ -672,7 +691,11 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             style=generate_payload.style,
             overrides=generate_payload.prompt_overrides,
         )
-        generation_kwargs = {"generation_mode": "human_wearing"} if generation_mode == "human_wearing" else {}
+        generation_kwargs = (
+            {"generation_mode": generation_mode}
+            if generation_mode in {"human_wearing", "scene_generation"}
+            else {}
+        )
         image_path, metadata_path, engine = await generate_ai_image(
             task.jobId,
             prompt,

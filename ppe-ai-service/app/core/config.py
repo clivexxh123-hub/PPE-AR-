@@ -38,6 +38,7 @@ class Settings(BaseModel):
     )
     comfyui_image_node_id: str | None = os.getenv("COMFYUI_IMAGE_NODE_ID")
     comfyui_denoise: float = float(os.getenv("COMFYUI_DENOISE", "0.60"))
+    comfyui_scene_generation_denoise: float = float(os.getenv("COMFYUI_SCENE_GENERATION_DENOISE", "0.35"))
     comfyui_positive_node_id: str | None = os.getenv("COMFYUI_POSITIVE_NODE_ID")
     comfyui_negative_node_id: str | None = os.getenv("COMFYUI_NEGATIVE_NODE_ID")
     comfyui_latent_node_id: str | None = os.getenv("COMFYUI_LATENT_NODE_ID")
