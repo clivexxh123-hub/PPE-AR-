@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -16,9 +17,6 @@ from app.main import app
 from app.services.logo_service import normalize_logo
 
 
-OUTPUT_ROOT = Path(r"D:\Don't Click it\JOB\XVison\PPE_AI\output\logo_remove_bg_smoke")
-
-
 def _expect_value_error(callback) -> None:
     try:
         callback()
@@ -28,15 +26,18 @@ def _expect_value_error(callback) -> None:
 
 
 def main() -> None:
+    temporary_output = tempfile.TemporaryDirectory(prefix="ppe-logo-remove-smoke-")
+    output_root = Path(temporary_output.name)
     original_output_dir = settings.output_dir
     original_task_dir = settings.task_dir
-    settings.output_dir = OUTPUT_ROOT
-    settings.task_dir = OUTPUT_ROOT / "tasks"
+    settings.output_dir = output_root
+    settings.task_dir = output_root / "tasks"
     try:
-        inputs = OUTPUT_ROOT / "inputs"
+        inputs = output_root / "inputs"
         inputs.mkdir(parents=True, exist_ok=True)
         logo_path = inputs / "white_background_logo.jpg"
         transparent_logo_path = inputs / "transparent_logo.png"
+        magenta_logo_path = inputs / "magenta_logo.png"
         invalid_path = inputs / "not_an_image.txt"
 
         logo = Image.new("RGB", (180, 120), "white")
@@ -45,6 +46,9 @@ def main() -> None:
         transparent_logo = Image.new("RGBA", (80, 40), (0, 0, 0, 0))
         ImageDraw.Draw(transparent_logo).ellipse((12, 6, 68, 34), fill="#EF4444")
         transparent_logo.save(transparent_logo_path, format="PNG")
+        magenta_logo = Image.new("RGB", (80, 40), "white")
+        ImageDraw.Draw(magenta_logo).rectangle((12, 6, 68, 34), fill=(255, 0, 255))
+        magenta_logo.save(magenta_logo_path, format="PNG")
         invalid_path.write_text("not an image", encoding="utf-8")
 
         image_path, metadata_path = normalize_logo("simple-background", logo_path)
@@ -66,6 +70,10 @@ def main() -> None:
         png_metadata = json.loads(png_metadata_path.read_text(encoding="utf-8"))
         assert png_metadata["background_method"] == "preserved_existing_alpha"
 
+        magenta_path, _ = normalize_logo("magenta-foreground", magenta_logo_path)
+        with Image.open(magenta_path) as result:
+            assert result.getpixel((256, 256))[3] == 255
+
         _expect_value_error(lambda: normalize_logo("invalid-input", invalid_path))
         _expect_value_error(lambda: normalize_logo("missing-input", inputs / "missing.png"))
 
@@ -84,6 +92,7 @@ def main() -> None:
     finally:
         settings.output_dir = original_output_dir
         settings.task_dir = original_task_dir
+        temporary_output.cleanup()
 
 
 if __name__ == "__main__":

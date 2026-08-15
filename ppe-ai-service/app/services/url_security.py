@@ -1,7 +1,7 @@
 import ipaddress
 import socket
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 
 _SENSITIVE_FIELD_NAMES = {
@@ -9,6 +9,12 @@ _SENSITIVE_FIELD_NAMES = {
     "cookie",
     "xapikey",
     "requiredheaders",
+}
+
+_SENSITIVE_URL_FIELD_NAMES = {
+    "callback",
+    "uploadurl",
+    "url",
 }
 
 
@@ -27,6 +33,30 @@ def redact_headers(headers: dict[str, Any] | None) -> dict[str, str]:
     return {str(key): "[REDACTED]" for key in headers}
 
 
+def redact_url(url: Any) -> str | None:
+    """Remove credentials, query values, and fragments before a URL is persisted."""
+    if url is None:
+        return None
+    text = str(url).strip()
+    if not text:
+        return None
+
+    parsed = urlparse(text)
+    if not parsed.scheme or not parsed.hostname:
+        return "[REDACTED]"
+
+    hostname = parsed.hostname
+    if ":" in hostname and not hostname.startswith("["):
+        hostname = f"[{hostname}]"
+    try:
+        port = parsed.port
+    except ValueError:
+        return "[REDACTED]"
+    netloc = f"{hostname}:{port}" if port is not None else hostname
+    query = "[REDACTED]" if parsed.query else ""
+    return urlunparse((parsed.scheme.lower(), netloc, parsed.path, "", query, ""))
+
+
 def redact_sensitive_data(value: Any) -> Any:
     """Recursively redact sensitive header fields before persisting metadata."""
     if isinstance(value, dict):
@@ -37,6 +67,8 @@ def redact_sensitive_data(value: Any) -> Any:
                 redacted[key] = redact_headers(item)
             elif normalized in _SENSITIVE_FIELD_NAMES:
                 redacted[key] = "[REDACTED]"
+            elif normalized in _SENSITIVE_URL_FIELD_NAMES:
+                redacted[key] = redact_url(item)
             else:
                 redacted[key] = redact_sensitive_data(item)
         return redacted

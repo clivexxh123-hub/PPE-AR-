@@ -7,9 +7,11 @@ from PIL import Image, UnidentifiedImageError
 
 from app.core.config import ensure_storage_dirs, settings
 from app.schemas.tasks import GenerateRequest, ImageSource
+from app.services.url_security import UnsafeUrlError, redact_url, validate_public_http_url
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP", "BMP"}
+MAX_IMAGE_REDIRECTS = 5
 
 
 class ImageAssetValidationError(ValueError):
@@ -53,13 +55,26 @@ async def _resolve_for_validation(source: ImageSource, role: str) -> tuple[Path,
 
 
 async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | None, str | None]:
+    original_url = url
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            response = await client.get(url)
-    except httpx.HTTPError as exc:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
+            for redirect_count in range(MAX_IMAGE_REDIRECTS + 1):
+                validate_public_http_url(url, purpose=f"{role} URL")
+                response = await client.get(url)
+                if not response.is_redirect:
+                    break
+                location = response.headers.get("location")
+                if not location:
+                    raise ImageAssetValidationError(f"{role} 图片重定向缺少 Location。")
+                if redirect_count >= MAX_IMAGE_REDIRECTS:
+                    raise ImageAssetValidationError(f"{role} 图片重定向次数过多。")
+                url = str(response.url.join(location))
+            else:  # pragma: no cover - loop always exits through break or an exception
+                raise ImageAssetValidationError(f"{role} 图片重定向次数过多。")
+    except (httpx.HTTPError, UnsafeUrlError) as exc:
         raise ImageAssetValidationError(
             f"{role} 图片下载失败：{exc}",
-            _failed_result(role=role, source_type="url", original_url=url, error=str(exc)),
+            _failed_result(role=role, source_type="url", original_url=redact_url(original_url), error=str(exc)),
         ) from exc
 
     if response.status_code >= 400:
@@ -68,7 +83,7 @@ async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | Non
             _failed_result(
                 role=role,
                 source_type="url",
-                original_url=url,
+                original_url=redact_url(original_url),
                 content_type=response.headers.get("content-type"),
                 error=f"http_status={response.status_code}",
             ),
@@ -81,7 +96,7 @@ async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | Non
             _failed_result(
                 role=role,
                 source_type="url",
-                original_url=url,
+                original_url=redact_url(original_url),
                 content_type=content_type,
                 error="content-type is not image/*",
             ),
@@ -91,7 +106,13 @@ async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | Non
     if not content:
         raise ImageAssetValidationError(
             f"{role} 图片内容为空。",
-            _failed_result(role=role, source_type="url", original_url=url, content_type=content_type, error="empty body"),
+            _failed_result(
+                role=role,
+                source_type="url",
+                original_url=redact_url(original_url),
+                content_type=content_type,
+                error="empty body",
+            ),
         )
     if len(content) > MAX_IMAGE_BYTES:
         raise ImageAssetValidationError(
@@ -99,17 +120,17 @@ async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | Non
             _failed_result(
                 role=role,
                 source_type="url",
-                original_url=url,
+                original_url=redact_url(original_url),
                 content_type=content_type,
                 file_size_bytes=len(content),
                 error="image too large",
             ),
         )
 
-    suffix = Path(httpx.URL(url).path).suffix.lower() or ".img"
+    suffix = Path(response.url.path).suffix.lower() or ".img"
     target = settings.input_dir / f"{uuid.uuid4().hex}{suffix}"
     target.write_bytes(content)
-    return target, "url", url, content_type
+    return target, "url", redact_url(original_url), content_type
 
 
 def _validate_local_image(

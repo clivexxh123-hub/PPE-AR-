@@ -1,0 +1,33 @@
+name: PPE AI regression
+
+on:
+  pull_request:
+    paths:
+      - "ppe-ai-service/**"
+      - ".github/workflows/ppe-ai-regression.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "ppe-ai-service/**"
+      - ".github/workflows/ppe-ai-regression.yml"
+
+jobs:
+  mock-regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ppe-ai-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ppe-ai-service/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run mock regression
+        env:
+          AI_ENGINE: mock
+        run: python scripts/run_phase1_regression.py

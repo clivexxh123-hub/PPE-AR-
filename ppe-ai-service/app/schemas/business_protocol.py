@@ -5,6 +5,17 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, mod
 from app.schemas.tasks import TaskStatus
 
 
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+_WINDOWS_FORBIDDEN_PATH_CHARS = set('<>:"/\\|?*')
+
+
 class TaskInputAsset(BaseModel):
     model_config = ConfigDict(title="业务输入资产")
 
@@ -68,6 +79,7 @@ class GenerationTaskInput(BaseModel):
 
     jobId: str = Field(description="业务任务 ID。")
     type: Literal["image_generation", "logo_remove_bg", "print_render"] = Field(
+        default="image_generation",
         description="任务类型：营销图生成、Logo 简单背景抠除或基础印刷设计图合成。",
     )
     tenantId: str = Field(description="租户 ID。")
@@ -110,8 +122,14 @@ class GenerationTaskInput(BaseModel):
     @field_validator("jobId")
     @classmethod
     def job_id_must_be_file_safe(cls, value: str) -> str:
-        if "/" in value or "\\" in value:
-            raise ValueError("jobId 不能包含路径分隔符。")
+        if len(value) > 128:
+            raise ValueError("jobId 长度不能超过 128 个字符。")
+        if value in {".", ".."} or value.endswith((".", " ")):
+            raise ValueError("jobId 不能使用特殊路径名称或以点/空格结尾。")
+        if any(character in _WINDOWS_FORBIDDEN_PATH_CHARS or ord(character) < 32 for character in value):
+            raise ValueError("jobId 包含文件系统不支持的字符。")
+        if value.split(".", maxsplit=1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+            raise ValueError("jobId 不能使用系统保留名称。")
         return value
 
 

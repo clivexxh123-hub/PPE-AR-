@@ -19,7 +19,7 @@ from app.services.logo_service import normalize_logo, render_printed_design
 from app.services.prompt_templates import build_prompt
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
-from app.services.url_security import redact_headers, redact_sensitive_data
+from app.services.url_security import redact_headers, redact_sensitive_data, redact_url
 
 router = APIRouter()
 
@@ -137,8 +137,13 @@ def get_business_ai_task(job_id: str) -> BusinessTaskResponse:
     tags=["结果文件"],
 )
 def get_output_file(task_id: str, filename: str) -> FileResponse:
-    path = settings.output_dir / task_id / filename
-    if not path.exists():
+    output_root = settings.output_dir.resolve()
+    path = (output_root / task_id / filename).resolve()
+    try:
+        path.relative_to(output_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="结果文件不存在。") from exc
+    if not path.is_file():
         raise HTTPException(status_code=404, detail="结果文件不存在。")
     return FileResponse(path)
 
@@ -172,8 +177,8 @@ def _assets_by_role(task: GenerationTaskInput) -> dict[str, list[dict[str, Any]]
 
 def _asset_warnings(task: GenerationTaskInput) -> list[dict[str, str]]:
     roles = {asset.role for asset in task.inputAssets}
-    product_image_url = _image_url_from_parameter(task.parameters, "product_image")
-    logo_image_url = _image_url_from_parameter(task.parameters, "logo_image")
+    product_image_url = redact_url(_image_url_from_parameter(task.parameters, "product_image"))
+    logo_image_url = redact_url(_image_url_from_parameter(task.parameters, "logo_image"))
     warnings: list[dict[str, str]] = []
     if "product_reference" in roles and not product_image_url:
         warnings.append(
@@ -320,7 +325,8 @@ def _business_extra(
             "operation": task.type,
             "inputAssets": [asset.model_dump(mode="json") for asset in task.inputAssets],
             "inputAssetsByRole": _assets_by_role(task),
-            "raw_callback": task.callback,
+            "callback_configured": bool(task.callback),
+            "callback_target": redact_url(task.callback),
             "callback_source": "GenerationTaskInput.callback",
             "parameters": redact_sensitive_data(task.parameters),
             "image_urls": {
@@ -710,4 +716,3 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
         record.message = "Logo 处理失败。"
         record.error = str(exc)
         save_task(record)
-

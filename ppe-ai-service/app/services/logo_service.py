@@ -1,7 +1,7 @@
 ﻿from pathlib import Path
 
 import json
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageDraw
 
 from app.core.config import ensure_storage_dirs, settings
 
@@ -82,15 +82,13 @@ def _remove_simple_background(image: Image.Image, tolerance: int = 24) -> tuple[
     if rgba.getchannel("A").getextrema()[0] < 255:
         return rgba, "preserved_existing_alpha"
 
-    rgb = rgba.convert("RGB")
-    filled = rgb.copy()
-    marker = (255, 0, 255)
+    filled = rgba.copy()
+    marker = (255, 0, 255, 1)
     width, height = filled.size
     for point in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)):
         ImageDraw.floodfill(filled, point, marker, thresh=tolerance)
 
-    marker_difference = ImageChops.difference(filled, Image.new("RGB", filled.size, marker))
-    background_alpha = marker_difference.convert("L").point(lambda value: 255 if value else 0)
+    background_alpha = filled.getchannel("A").point(lambda value: 0 if value == marker[3] else 255)
     rgba.putalpha(background_alpha)
     return rgba, "border_flood_fill"
 

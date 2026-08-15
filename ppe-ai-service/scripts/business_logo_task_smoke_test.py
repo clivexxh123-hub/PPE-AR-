@@ -1,6 +1,7 @@
 """Minimal /ai/tasks regression test for all currently supported operations."""
 
 import sys
+import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -12,9 +13,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.core.config import settings
 from app.main import app
-
-
-OUTPUT_ROOT = Path(r"D:\Don't Click it\JOB\XVison\PPE_AI\output\business_logo_task_smoke")
 
 
 def _task_payload(
@@ -40,16 +38,18 @@ def _task_payload(
 
 
 def main() -> None:
+    temporary_output = tempfile.TemporaryDirectory(prefix="ppe-business-task-smoke-")
+    output_root = Path(temporary_output.name)
     original_output_dir = settings.output_dir
     original_task_dir = settings.task_dir
     original_input_dir = settings.input_dir
     original_engine = settings.ai_engine
-    settings.output_dir = OUTPUT_ROOT / "outputs"
-    settings.task_dir = OUTPUT_ROOT / "tasks"
-    settings.input_dir = OUTPUT_ROOT / "inputs"
+    settings.output_dir = output_root / "outputs"
+    settings.task_dir = output_root / "tasks"
+    settings.input_dir = output_root / "inputs"
     settings.ai_engine = "mock"
     try:
-        inputs = OUTPUT_ROOT / "fixtures"
+        inputs = output_root / "fixtures"
         inputs.mkdir(parents=True, exist_ok=True)
         base_path = inputs / "product.png"
         logo_path = inputs / "logo.jpg"
@@ -178,12 +178,23 @@ def main() -> None:
             assert conflict.status_code == 422, conflict.text
             assert "detail" in conflict.json()
 
-            missing_type = client.post(
+            default_generation = client.post(
                 "/ai/tasks",
-                json=_task_payload("smoke-missing-task-type", None, {}),
+                json=_task_payload(
+                    "smoke-default-task-type",
+                    None,
+                    {
+                        "product_name": "safety helmet",
+                        "product_category": "PPE/head protection",
+                        "scene": "studio",
+                        "style": "commercial product photo",
+                        "size": "512x512",
+                        "output_format": "png",
+                    },
+                ),
             )
-            assert missing_type.status_code == 422, missing_type.text
-            assert "detail" in missing_type.json()
+            assert default_generation.status_code == 200, default_generation.text
+            assert default_generation.json()["status"] == "succeeded"
 
             unknown = client.post(
                 "/ai/tasks",
@@ -197,6 +208,7 @@ def main() -> None:
         settings.task_dir = original_task_dir
         settings.input_dir = original_input_dir
         settings.ai_engine = original_engine
+        temporary_output.cleanup()
 
 
 if __name__ == "__main__":
