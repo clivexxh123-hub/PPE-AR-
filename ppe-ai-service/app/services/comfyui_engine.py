@@ -23,13 +23,17 @@ def _parse_size(size: str) -> tuple[int, int]:
         return 1024, 1024
 
 
-def _load_workflow() -> dict[str, Any]:
-    workflow_path = settings.comfyui_workflow_path
-    if not workflow_path.is_absolute():
-        workflow_path = settings.base_dir / workflow_path
-    if not workflow_path.exists():
-        raise ComfyUIError(f"ComfyUI 工作流文件不存在：{workflow_path}")
-    return json.loads(workflow_path.read_text(encoding="utf-8-sig"))
+def _resolve_workflow_path(workflow_path: Path) -> Path:
+    if workflow_path.is_absolute():
+        return workflow_path
+    return settings.base_dir / workflow_path
+
+
+def _load_workflow(workflow_path: Path) -> dict[str, Any]:
+    resolved_path = _resolve_workflow_path(workflow_path)
+    if not resolved_path.exists():
+        raise ComfyUIError(f"ComfyUI 工作流文件不存在：{resolved_path}")
+    return json.loads(resolved_path.read_text(encoding="utf-8-sig"))
 
 
 def _node(workflow: dict[str, Any], node_id: str | None) -> dict[str, Any] | None:
@@ -39,12 +43,21 @@ def _node(workflow: dict[str, Any], node_id: str | None) -> dict[str, Any] | Non
     return value if isinstance(value, dict) else None
 
 
-def _patch_workflow(workflow: dict[str, Any], task_id: str, prompt: str, size: str) -> dict[str, Any]:
+def _patch_workflow(
+    workflow: dict[str, Any],
+    task_id: str,
+    prompt: str,
+    size: str,
+    generation_mode: str,
+    comfyui_image_name: str | None = None,
+) -> dict[str, Any]:
     width, height = _parse_size(size)
     positive_patched = False
     negative_patched = False
     latent_patched = False
     save_patched = False
+    image_patched = comfyui_image_name is None
+    denoise_patched = False
 
     positive_node = _node(workflow, settings.comfyui_positive_node_id)
     if positive_node is not None:
@@ -62,6 +75,11 @@ def _patch_workflow(workflow: dict[str, Any], task_id: str, prompt: str, size: s
         inputs["width"] = width
         inputs["height"] = height
         latent_patched = True
+
+    image_node = _node(workflow, settings.comfyui_image_node_id)
+    if image_node is not None and comfyui_image_name is not None:
+        image_node.setdefault("inputs", {})["image"] = comfyui_image_name
+        image_patched = True
 
     save_node = _node(workflow, settings.comfyui_save_node_id)
     if save_node is not None:
@@ -84,12 +102,20 @@ def _patch_workflow(workflow: dict[str, Any], task_id: str, prompt: str, size: s
             negative_patched = True
             continue
 
-        if not latent_patched and class_type in {"EmptyLatentImage", "EmptySD3LatentImage"}:
+        if not latent_patched and generation_mode == "text_to_image" and class_type in {"EmptyLatentImage", "EmptySD3LatentImage"}:
             if "width" in inputs:
                 inputs["width"] = width
             if "height" in inputs:
                 inputs["height"] = height
             latent_patched = True
+
+        if not image_patched and generation_mode == "image_to_image" and class_type == "LoadImage" and "image" in inputs:
+            inputs["image"] = comfyui_image_name
+            image_patched = True
+
+        if not denoise_patched and generation_mode == "image_to_image" and class_type == "KSampler" and "denoise" in inputs:
+            inputs["denoise"] = settings.comfyui_denoise
+            denoise_patched = True
 
         if not save_patched and class_type == "SaveImage":
             inputs["filename_prefix"] = f"ppe_ai_{task_id}"
@@ -100,6 +126,8 @@ def _patch_workflow(workflow: dict[str, Any], task_id: str, prompt: str, size: s
 
     if not positive_patched:
         raise ComfyUIError("没有找到可写入 Prompt 的节点。请设置 COMFYUI_POSITIVE_NODE_ID 或检查工作流 JSON。")
+    if generation_mode == "image_to_image" and not image_patched:
+        raise ComfyUIError("没有找到可写入输入图片的 LoadImage 节点。请设置 COMFYUI_IMAGE_NODE_ID 或检查工作流 JSON。")
     return workflow
 
 
@@ -115,6 +143,24 @@ def _extract_first_image(history_item: dict[str, Any]) -> dict[str, str] | None:
                     "type": image.get("type", "output"),
                 }
     return None
+
+
+async def _upload_input_image(client: httpx.AsyncClient, image_path: Path, task_id: str) -> str:
+    if not image_path.exists() or not image_path.is_file():
+        raise ComfyUIError(f"img2img 输入图片不存在：{image_path}")
+    suffix = image_path.suffix.lower() or ".png"
+    upload_name = f"ppe_ai_{task_id}_input{suffix}"
+    with image_path.open("rb") as file_obj:
+        files = {"image": (upload_name, file_obj, "application/octet-stream")}
+        data = {"type": "input", "overwrite": "true"}
+        response = await client.post("/upload/image", files=files, data=data)
+    response.raise_for_status()
+    payload = response.json()
+    name = payload.get("name") or upload_name
+    subfolder = payload.get("subfolder")
+    if subfolder:
+        return f"{subfolder}/{name}"
+    return name
 
 
 async def _wait_for_image(client: httpx.AsyncClient, prompt_id: str) -> tuple[dict[str, Any], dict[str, str]]:
@@ -134,14 +180,29 @@ async def _wait_for_image(client: httpx.AsyncClient, prompt_id: str) -> tuple[di
     raise ComfyUIError("等待 ComfyUI 生成结果超时。")
 
 
-async def generate_comfyui_image(task_id: str, prompt: str, size: str, output_format: str = "png") -> tuple[Path, Path]:
+async def generate_comfyui_image(
+    task_id: str,
+    prompt: str,
+    size: str,
+    output_format: str = "png",
+    product_image_path: Path | None = None,
+) -> tuple[Path, Path]:
     ensure_storage_dirs()
     output_dir = settings.output_dir / task_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    workflow = _patch_workflow(_load_workflow(), task_id, prompt, size)
+    generation_mode = "image_to_image" if product_image_path is not None else "text_to_image"
+    workflow_path = (
+        settings.comfyui_image_to_image_workflow_path
+        if generation_mode == "image_to_image"
+        else settings.comfyui_text_to_image_workflow_path
+    )
     timeout = httpx.Timeout(settings.comfyui_timeout_seconds)
+    comfyui_image_name: str | None = None
     async with httpx.AsyncClient(base_url=settings.comfyui_base_url, timeout=timeout) as client:
+        if product_image_path is not None:
+            comfyui_image_name = await _upload_input_image(client, product_image_path, task_id)
+        workflow = _patch_workflow(_load_workflow(workflow_path), task_id, prompt, size, generation_mode, comfyui_image_name)
         queue_response = await client.post("/prompt", json={"prompt": workflow, "client_id": task_id})
         queue_response.raise_for_status()
         prompt_id = queue_response.json().get("prompt_id")
@@ -161,8 +222,13 @@ async def generate_comfyui_image(task_id: str, prompt: str, size: str, output_fo
     metadata = {
         "task_id": task_id,
         "engine": "comfyui",
+        "generation_mode": generation_mode,
+        "product_image_used": product_image_path is not None,
+        "product_image_local_path": str(product_image_path) if product_image_path is not None else None,
+        "comfyui_input_image": comfyui_image_name,
         "comfyui_base_url": settings.comfyui_base_url,
-        "workflow_path": str(settings.comfyui_workflow_path),
+        "workflow_path": str(workflow_path),
+        "denoise": settings.comfyui_denoise if generation_mode == "image_to_image" else None,
         "prompt_id": prompt_id,
         "prompt": prompt,
         "size": size,

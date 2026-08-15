@@ -1,5 +1,6 @@
 ﻿import time
 import json
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
@@ -14,10 +15,11 @@ from app.services.error_codes import map_exception_to_error
 from app.services.generation_engine import generate_ai_image
 from app.services.image_asset_service import validate_generate_request_images
 from app.services.input_adapter import resolve_image_source, save_upload
-from app.services.logo_service import normalize_logo
+from app.services.logo_service import normalize_logo, render_printed_design
 from app.services.prompt_templates import build_prompt
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
+from app.services.url_security import redact_headers, redact_sensitive_data
 
 router = APIRouter()
 
@@ -58,7 +60,8 @@ async def generate_image(payload: GenerateRequest, background_tasks: BackgroundT
     tags=["AI 图片生成"],
 )
 async def create_business_ai_task(payload: GenerationTaskInput, background_tasks: BackgroundTasks) -> BusinessTaskResponse:
-    record = create_task("ai.business_generate", payload.model_dump(mode="json"), task_id=payload.jobId)
+    request_payload = redact_sensitive_data(payload.model_dump(mode="json"))
+    record = create_task("ai.business_generate", request_payload, task_id=payload.jobId)
     save_task(record, extra=_business_extra(payload))
     if bool(payload.parameters.get("sync", False)):
         await _run_business_generate_task(payload)
@@ -77,9 +80,9 @@ async def create_business_ai_task(payload: GenerationTaskInput, background_tasks
 async def remove_logo_background(payload: LogoPlaceRequest, background_tasks: BackgroundTasks) -> TaskResponse:
     record = create_task("logo.remove_bg", payload.model_dump(mode="json"))
     if payload.sync:
-        await _run_logo_task(record.task_id, payload)
+        await _run_logo_task(record.task_id, payload, operation="remove_bg")
     else:
-        background_tasks.add_task(_run_logo_task, record.task_id, payload)
+        background_tasks.add_task(_run_logo_task, record.task_id, payload, "remove_bg")
     return to_response(load_task(record.task_id) or record)
 
 
@@ -93,9 +96,9 @@ async def remove_logo_background(payload: LogoPlaceRequest, background_tasks: Ba
 async def place_logo(payload: LogoPlaceRequest, background_tasks: BackgroundTasks) -> TaskResponse:
     record = create_task("logo.place", payload.model_dump(mode="json"))
     if payload.sync:
-        await _run_logo_task(record.task_id, payload)
+        await _run_logo_task(record.task_id, payload, operation="place")
     else:
-        background_tasks.add_task(_run_logo_task, record.task_id, payload)
+        background_tasks.add_task(_run_logo_task, record.task_id, payload, "place")
     return to_response(load_task(record.task_id) or record)
 
 
@@ -175,6 +178,19 @@ def _asset_warnings(task: GenerationTaskInput) -> list[dict[str, str]]:
     return warnings
 
 
+def _validated_product_image_path(input_asset_validation: dict[str, Any] | None) -> Path | None:
+    if not isinstance(input_asset_validation, dict):
+        return None
+    product_image = input_asset_validation.get("product_image")
+    if not isinstance(product_image, dict):
+        return None
+    if product_image.get("validation_status") != "passed":
+        return None
+    local_path = product_image.get("local_path")
+    if not local_path:
+        return None
+    return Path(str(local_path))
+
 def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateRequest:
     prompt_overrides = parameters.get("prompt_overrides")
     if not isinstance(prompt_overrides, dict):
@@ -218,12 +234,21 @@ def _business_extra(
             "inputAssets": [asset.model_dump(mode="json") for asset in task.inputAssets],
             "inputAssetsByRole": _assets_by_role(task),
             "raw_callback": task.callback,
-            "callback_source": "TASK_CENTER_BASE_URL",
-            "parameters": task.parameters,
+            "callback_source": "GenerationTaskInput.callback",
+            "parameters": redact_sensitive_data(task.parameters),
             "image_urls": {
                 "product_image": product_image_url,
                 "logo_image": logo_image_url,
             },
+            "output": {
+                "assetKey": task.output.assetKey,
+                "method": task.output.method,
+                "requiredHeaders": redact_headers(task.output.requiredHeaders),
+                "expiresAt": task.output.expiresAt,
+                "uploadUrl_present": True,
+            }
+            if task.output
+            else None,
             "input_asset_validation": input_asset_validation or {},
             "asset_warnings": _asset_warnings(task),
             "storage_backend": storage_result.storage_backend if storage_result else settings.storage_backend,
@@ -310,7 +335,7 @@ async def _report_business_event(
         workflowVersion=task.workflowVersion,
         result=result,
     )
-    return await send_worker_callback(settings.task_center_base_url, event)
+    return await send_worker_callback(task.callback, event)
 
 
 async def _run_business_generate_task(task: GenerationTaskInput) -> None:
@@ -340,10 +365,11 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             prompt,
             generate_payload.size,
             generate_payload.output_format,
+            product_image_path=_validated_product_image_path(input_asset_validation),
         )
-        result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path)
+        result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path, asset_key=task.output.assetKey if task.output else None)
         result_url = f"/outputs/{task.jobId}/{image_path.name}"
-        storage_result = upload_result(image_path, result.assetKey, local_url=result_url)
+        storage_result = await upload_result(image_path, result.assetKey, local_url=result_url, output=task.output)
         record.status = TaskStatus.succeeded
         record.message = f"业务 AI 图片已生成，当前使用 {engine} 引擎。"
         record.output_path = str(image_path)
@@ -420,7 +446,7 @@ async def _run_generate_task(task_id: str, payload: GenerateRequest) -> None:
         save_task(record)
 
 
-async def _run_logo_task(task_id: str, payload: LogoPlaceRequest) -> None:
+async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str = "place") -> None:
     record = load_task(task_id)
     if record is None:
         return
@@ -429,7 +455,22 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest) -> None:
         record.message = "正在处理 Logo 占位流程。"
         save_task(record)
         logo_path = await resolve_image_source(payload.logo_image)
-        image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
+        if operation == "place":
+            base_path = await resolve_image_source(payload.base_image)
+            if base_path is None:
+                image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
+            else:
+                image_path, metadata_path = render_printed_design(
+                    task_id,
+                    base_path,
+                    logo_path,
+                    position_x_ratio=payload.position_x_ratio,
+                    position_y_ratio=payload.position_y_ratio,
+                    logo_width_ratio=payload.logo_width_ratio or payload.scale,
+                    opacity=payload.opacity,
+                )
+        else:
+            image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
         record.status = TaskStatus.succeeded
         record.message = "Logo 占位处理已完成。后续会接入真实抠图和贴图逻辑。"
         record.output_path = str(image_path)
@@ -442,5 +483,7 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest) -> None:
         record.message = "Logo 处理失败。"
         record.error = str(exc)
         save_task(record)
+
+
 
 

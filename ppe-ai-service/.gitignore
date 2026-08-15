@@ -4,6 +4,7 @@ __pycache__/
 storage/inputs/*
 storage/outputs/*
 storage/tasks/*
+storage/test_assets/*
 !storage/inputs/.gitkeep
 !storage/outputs/.gitkeep
 !storage/tasks/.gitkeep
