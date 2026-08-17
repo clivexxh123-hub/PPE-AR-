@@ -1,7 +1,9 @@
 ﻿from pathlib import Path
 
+from collections import deque
+
 import json
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image
 
 from app.core.config import ensure_storage_dirs, settings
 
@@ -83,15 +85,32 @@ def _remove_simple_background(image: Image.Image, tolerance: int = 24) -> tuple[
         return rgba, "preserved_existing_alpha"
 
     rgb = rgba.convert("RGB")
-    filled = rgb.copy()
-    marker = (255, 0, 255)
-    width, height = filled.size
-    for point in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)):
-        ImageDraw.floodfill(filled, point, marker, thresh=tolerance)
+    width, height = rgb.size
+    pixels = rgb.load()
+    background = Image.new("L", rgb.size, 0)
+    background_pixels = background.load()
 
-    marker_difference = ImageChops.difference(filled, Image.new("RGB", filled.size, marker))
-    background_alpha = marker_difference.convert("L").point(lambda value: 255 if value else 0)
-    rgba.putalpha(background_alpha)
+    def is_background_color(color: tuple[int, int, int], reference: tuple[int, int, int]) -> bool:
+        return all(abs(component - expected) <= tolerance for component, expected in zip(color, reference))
+
+    for start in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)):
+        reference = pixels[start]
+        pending = deque([start])
+        visited: set[tuple[int, int]] = set()
+        while pending:
+            x, y = pending.popleft()
+            if (x, y) in visited:
+                continue
+            visited.add((x, y))
+            if not is_background_color(pixels[x, y], reference):
+                continue
+            background_pixels[x, y] = 255
+            for next_x, next_y in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                if 0 <= next_x < width and 0 <= next_y < height:
+                    pending.append((next_x, next_y))
+
+    alpha = background.point(lambda value: 0 if value else 255)
+    rgba.putalpha(alpha)
     return rgba, "border_flood_fill"
 
 

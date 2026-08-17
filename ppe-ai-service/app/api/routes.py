@@ -25,7 +25,7 @@ from app.services.logo_service import normalize_logo, render_printed_design
 from app.services.prompt_templates import build_human_wearing_prompt, build_prompt, build_scene_generation_prompt
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
-from app.services.url_security import redact_headers, redact_sensitive_data
+from app.services.url_security import redact_headers, redact_sensitive_data, redact_url
 
 router = APIRouter()
 
@@ -399,7 +399,7 @@ def _business_extra(
             "operation": task.type,
             "inputAssets": [asset.model_dump(mode="json") for asset in task.inputAssets],
             "inputAssetsByRole": _assets_by_role(task),
-            "raw_callback": task.callback,
+            "raw_callback": redact_url(task.callback),
             "callback_source": "GenerationTaskInput.callback",
             "generation_mode": generation_mode,
             "human_wearing_used": human_wearing_used,
@@ -457,14 +457,17 @@ def _business_extra(
             "retryable": retryable,
         }
     if callback_result is not None:
-        payload["business_last_callback"] = callback_result
-        if callback_result.get("callback_skipped"):
+        safe_callback_result = redact_sensitive_data(callback_result)
+        if isinstance(safe_callback_result, dict) and safe_callback_result.get("callback"):
+            safe_callback_result["callback"] = redact_url(str(safe_callback_result["callback"]))
+        payload["business_last_callback"] = safe_callback_result
+        if safe_callback_result.get("callback_skipped"):
             payload["business_protocol"]["callback_skipped"] = True
-            payload["business_protocol"]["callback_skip_reason"] = callback_result.get("reason")
-        if callback_result.get("callback"):
-            payload["business_protocol"]["callback_url"] = callback_result.get("callback")
-        if callback_result.get("sent") is False and not callback_result.get("callback_skipped"):
-            payload["business_callback_error"] = callback_result
+            payload["business_protocol"]["callback_skip_reason"] = safe_callback_result.get("reason")
+        if safe_callback_result.get("callback"):
+            payload["business_protocol"]["callback_url"] = safe_callback_result.get("callback")
+        if safe_callback_result.get("sent") is False and not safe_callback_result.get("callback_skipped"):
+            payload["business_callback_error"] = safe_callback_result
     return payload
 
 

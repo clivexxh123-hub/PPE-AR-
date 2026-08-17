@@ -3,7 +3,7 @@
 import httpx
 
 from app.schemas.business_protocol import WorkerCallbackEvent
-from app.services.url_security import UnsafeUrlError, validate_public_http_url
+from app.services.url_security import UnsafeUrlError, redact_url, validate_public_http_url
 
 
 async def send_worker_callback(callback_url: str | None, event: WorkerCallbackEvent) -> dict[str, Any]:
@@ -19,7 +19,7 @@ async def send_worker_callback(callback_url: str | None, event: WorkerCallbackEv
         return {
             "sent": False,
             "callback_skipped": True,
-            "callback": callback_url,
+            "callback": redact_url(callback_url),
             "reason": "callback 不是 HTTP(S) URL",
         }
 
@@ -30,7 +30,7 @@ async def send_worker_callback(callback_url: str | None, event: WorkerCallbackEv
         return {
             "sent": response.is_success,
             "callback_skipped": False,
-            "callback": callback_url,
+            "callback": redact_url(callback_url),
             "status_code": response.status_code,
             "body": response.text[:500],
         }
@@ -38,7 +38,7 @@ async def send_worker_callback(callback_url: str | None, event: WorkerCallbackEv
         return {
             "sent": False,
             "callback_skipped": False,
-            "callback": callback_url,
+            "callback": redact_url(callback_url),
             "security_blocked": True,
             "error": str(exc),
         }
