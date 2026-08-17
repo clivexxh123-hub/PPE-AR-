@@ -1,6 +1,7 @@
 """Minimal /ai/tasks regression test for all currently supported operations."""
 
 import sys
+import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -12,9 +13,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app.core.config import settings
 from app.main import app
-
-
-OUTPUT_ROOT = Path(r"D:\Don't Click it\JOB\XVison\PPE_AI\output\business_logo_task_smoke")
 
 
 def _task_payload(
@@ -39,17 +37,17 @@ def _task_payload(
     return payload
 
 
-def main() -> None:
+def _run(output_root: Path) -> None:
     original_output_dir = settings.output_dir
     original_task_dir = settings.task_dir
     original_input_dir = settings.input_dir
     original_engine = settings.ai_engine
-    settings.output_dir = OUTPUT_ROOT / "outputs"
-    settings.task_dir = OUTPUT_ROOT / "tasks"
-    settings.input_dir = OUTPUT_ROOT / "inputs"
+    settings.output_dir = output_root / "outputs"
+    settings.task_dir = output_root / "tasks"
+    settings.input_dir = output_root / "inputs"
     settings.ai_engine = "mock"
     try:
-        inputs = OUTPUT_ROOT / "fixtures"
+        inputs = output_root / "fixtures"
         inputs.mkdir(parents=True, exist_ok=True)
         base_path = inputs / "product.png"
         logo_path = inputs / "logo.jpg"
@@ -180,10 +178,21 @@ def main() -> None:
 
             missing_type = client.post(
                 "/ai/tasks",
-                json=_task_payload("smoke-missing-task-type", None, {}),
+                json=_task_payload(
+                    "smoke-missing-task-type",
+                    None,
+                    {
+                        "product_name": "safety helmet",
+                        "product_category": "PPE/head protection",
+                        "scene": "studio",
+                        "style": "commercial product photo",
+                        "size": "512x512",
+                        "output_format": "png",
+                    },
+                ),
             )
-            assert missing_type.status_code == 422, missing_type.text
-            assert "detail" in missing_type.json()
+            assert missing_type.status_code == 200, missing_type.text
+            assert missing_type.json()["status"] == "succeeded"
 
             unknown = client.post(
                 "/ai/tasks",
@@ -191,12 +200,31 @@ def main() -> None:
             )
             assert unknown.status_code == 422, unknown.text
             assert "detail" in unknown.json()
+
+            invalid_generation_mode = client.post(
+                "/ai/tasks",
+                json=_task_payload(
+                    "smoke-invalid-generation-mode",
+                    "image_generation",
+                    {
+                        "product_name": "safety helmet",
+                        "generation_mode": "human_wearng",
+                    },
+                ),
+            )
+            assert invalid_generation_mode.status_code == 422, invalid_generation_mode.text
+            assert "detail" in invalid_generation_mode.json()
         print("BUSINESS_LOGO_TASK_SMOKE_OK")
     finally:
         settings.output_dir = original_output_dir
         settings.task_dir = original_task_dir
         settings.input_dir = original_input_dir
         settings.ai_engine = original_engine
+
+
+def main() -> None:
+    with tempfile.TemporaryDirectory(prefix="ppe-business-logo-task-") as temp_dir:
+        _run(Path(temp_dir))
 
 
 if __name__ == "__main__":

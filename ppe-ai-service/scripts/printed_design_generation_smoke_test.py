@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -18,11 +19,8 @@ from app.schemas.tasks import TaskStatus
 from app.services.task_store import create_task, load_task, load_task_payload
 
 
-TEST_ROOT = Path(r"D:\Don't Click it\JOB\XVison\PPE_AI\output\printed_design_generation_smoke")
-
-
-def _create_inputs() -> tuple[Path, Path]:
-    input_dir = TEST_ROOT / "inputs"
+def _create_inputs(root: Path) -> tuple[Path, Path]:
+    input_dir = root / "inputs"
     input_dir.mkdir(parents=True, exist_ok=True)
     base_path = input_dir / "base.png"
     logo_path = input_dir / "logo.png"
@@ -65,8 +63,8 @@ def _build_task(job_id: str, base_path: Path, logo_path: Path | None) -> Generat
     )
 
 
-async def main() -> None:
-    base_path, logo_path = _create_inputs()
+async def _run(root: Path) -> None:
+    base_path, logo_path = _create_inputs(root)
     captured_inputs: dict[str, Path | None] = {}
 
     async def fake_generate(
@@ -98,9 +96,9 @@ async def main() -> None:
     original_input_dir = settings.input_dir
     original_task_dir = settings.task_dir
     original_storage_backend = settings.storage_backend
-    settings.output_dir = TEST_ROOT / "outputs"
-    settings.input_dir = TEST_ROOT / "validated_inputs"
-    settings.task_dir = TEST_ROOT / "tasks"
+    settings.output_dir = root / "outputs"
+    settings.input_dir = root / "validated_inputs"
+    settings.task_dir = root / "tasks"
     settings.storage_backend = "local"
     routes.generate_ai_image = fake_generate
     try:
@@ -133,7 +131,12 @@ async def main() -> None:
         settings.task_dir = original_task_dir
         settings.storage_backend = original_storage_backend
 
-    print(f"PRINTED_DESIGN_GENERATION_SMOKE_OK output={TEST_ROOT}")
+    print("PRINTED_DESIGN_GENERATION_SMOKE_OK")
+
+
+async def main() -> None:
+    with tempfile.TemporaryDirectory(prefix="ppe-printed-design-generation-") as temp_dir:
+        await _run(Path(temp_dir))
 
 
 if __name__ == "__main__":

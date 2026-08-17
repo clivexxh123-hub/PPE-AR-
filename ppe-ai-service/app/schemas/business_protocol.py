@@ -68,6 +68,7 @@ class GenerationTaskInput(BaseModel):
 
     jobId: str = Field(description="业务任务 ID。")
     type: Literal["image_generation", "logo_remove_bg", "print_render"] = Field(
+        default="image_generation",
         description="任务类型：营销图生成、Logo 简单背景抠除或基础印刷设计图合成。",
     )
     tenantId: str = Field(description="租户 ID。")
@@ -98,6 +99,21 @@ class GenerationTaskInput(BaseModel):
         # taskType 仅作为业务输入兼容别名；内部统一只使用 type。
         payload.pop("taskType", None)
         return payload
+
+    @model_validator(mode="after")
+    def validate_generation_mode(self) -> "GenerationTaskInput":
+        generation_mode = self.parameters.get("generation_mode")
+        if generation_mode is None:
+            return self
+        if not isinstance(generation_mode, str):
+            raise ValueError("generation_mode 必须是字符串。")
+
+        normalized_mode = generation_mode.strip().lower()
+        if normalized_mode not in {"", "human_wearing"}:
+            raise ValueError("generation_mode 仅支持 human_wearing 或留空。")
+        if normalized_mode:
+            self.parameters = {**self.parameters, "generation_mode": normalized_mode}
+        return self
 
     @field_validator("jobId", "tenantId", "traceId", "modelProfileId", "workflowVersion")
     @classmethod
