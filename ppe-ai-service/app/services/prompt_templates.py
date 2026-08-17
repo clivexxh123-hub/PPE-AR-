@@ -89,3 +89,22 @@ def build_scene_generation_prompt(
         if extra:
             prompt = f"{prompt} {extra}."
     return prompt
+
+
+def build_scene_background_prompt(
+    scene: str,
+    style: str,
+    overrides: dict | None = None,
+) -> str:
+    """Build an empty marketing background for deterministic PPE compositing."""
+    prompt = (
+        "Realistic commercial PPE marketing background with clear empty foreground space for a product. "
+        f"Marketing scene: {scene}. Style: {style}. "
+        "Professional lighting, realistic depth, clean composition. "
+        "No PPE products, no helmets, no people, no text, no labels, no watermark, no collage."
+    )
+    if overrides:
+        extra = " ".join(str(value) for value in overrides.values() if value)
+        if extra:
+            prompt = f"{prompt} {extra}."
+    return prompt

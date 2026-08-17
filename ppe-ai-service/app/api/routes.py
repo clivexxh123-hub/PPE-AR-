@@ -22,7 +22,13 @@ from app.services.image_asset_service import (
 )
 from app.services.input_adapter import resolve_image_source, save_upload
 from app.services.logo_service import normalize_logo, render_printed_design
-from app.services.prompt_templates import build_human_wearing_prompt, build_prompt, build_scene_generation_prompt
+from app.services.prompt_templates import (
+    build_human_wearing_prompt,
+    build_prompt,
+    build_scene_background_prompt,
+    build_scene_generation_prompt,
+)
+from app.services.scene_composite_service import render_scene_marketing_image
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
 from app.services.url_security import redact_headers, redact_sensitive_data, redact_url
@@ -330,6 +336,31 @@ async def _prepare_human_wearing_input(
     }, validation
 
 
+def _prepare_scene_generation_foreground(
+    input_asset_validation: dict[str, Any] | None,
+) -> tuple[Path, dict[str, Any]]:
+    """Require a transparent PPE foreground for deterministic scene compositing."""
+    validation = dict(input_asset_validation or {})
+    product_path = _validated_product_image_path(validation)
+    if product_path is None:
+        raise ValueError("scene_generation 需要已校验通过的 parameters.product_image。")
+    try:
+        product_validation = validation.get("product_image")
+        if not isinstance(product_validation, dict):
+            product_validation = {}
+            validation["product_image"] = product_validation
+        product_validation.update(validate_alpha_channel(product_path, "product_image"))
+    except ImageAssetValidationError as exc:
+        combined = dict(validation)
+        product_validation = combined.get("product_image")
+        if isinstance(product_validation, dict):
+            product_validation.update(exc.validation_result)
+        else:
+            combined["product_image"] = exc.validation_result
+        raise ImageAssetValidationError(str(exc), combined) from exc
+    return product_path, validation
+
+
 def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateRequest:
     prompt_overrides = parameters.get("prompt_overrides")
     if not isinstance(prompt_overrides, dict):
@@ -386,8 +417,19 @@ def _business_extra(
     generation_mode = str(task.parameters.get("generation_mode", "")).strip() or None
     human_wearing_used = bool(printed_design and printed_design.get("human_wearing_used"))
     scene_generation_used = generation_mode == "scene_generation"
+    scene_generation_strategy = (
+        str(printed_design.get("scene_generation_strategy"))
+        if printed_design and printed_design.get("scene_generation_strategy")
+        else None
+    )
+    background_generated = bool(printed_design and printed_design.get("background_generated"))
+    product_composited = bool(printed_design and printed_design.get("product_composited"))
     product_reference_used = _validated_product_image_path(input_asset_validation) is not None
-    denoise = settings.comfyui_scene_generation_denoise if scene_generation_used else None
+    denoise = (
+        settings.comfyui_scene_generation_denoise
+        if scene_generation_used and scene_generation_strategy != "generated_background_composite"
+        else None
+    )
     payload: dict[str, Any] = {
         "business_protocol": {
             "jobId": task.jobId,
@@ -404,6 +446,9 @@ def _business_extra(
             "generation_mode": generation_mode,
             "human_wearing_used": human_wearing_used,
             "scene_generation_used": scene_generation_used,
+            "scene_generation_strategy": scene_generation_strategy,
+            "background_generated": background_generated,
+            "product_composited": product_composited,
             "scene": str(task.parameters.get("scene", "")).strip() or None,
             "style": str(task.parameters.get("style", "")).strip() or None,
             "product_reference_used": product_reference_used,
@@ -439,6 +484,9 @@ def _business_extra(
     payload["generation_mode"] = generation_mode
     payload["human_wearing_used"] = human_wearing_used
     payload["scene_generation_used"] = scene_generation_used
+    payload["scene_generation_strategy"] = scene_generation_strategy
+    payload["background_generated"] = background_generated
+    payload["product_composited"] = product_composited
     payload["product_reference_used"] = product_reference_used
     payload["denoise"] = denoise
     if printed_design is not None:
@@ -667,9 +715,16 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             generation_input_path, printed_design, input_asset_validation = await _prepare_human_wearing_input(
                 task, generate_payload, input_asset_validation
             )
+        elif generation_mode == "scene_generation":
+            generation_input_path, input_asset_validation = _prepare_scene_generation_foreground(input_asset_validation)
+            printed_design = {
+                "printed_design_used": False,
+                "scene_generation_strategy": "generated_background_composite",
+                "background_generated": False,
+                "product_composited": False,
+                "ppe_foreground_path": str(generation_input_path),
+            }
         else:
-            if generation_mode == "scene_generation" and _validated_product_image_path(input_asset_validation) is None:
-                raise ValueError("scene_generation 需要已校验通过的 parameters.product_image。")
             generation_input_path, printed_design = _prepare_generation_input(task, input_asset_validation)
         save_task(
             record,
@@ -699,14 +754,48 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             if generation_mode in {"human_wearing", "scene_generation"}
             else {}
         )
-        image_path, metadata_path, engine = await generate_ai_image(
-            task.jobId,
-            prompt,
-            generate_payload.size,
-            generate_payload.output_format,
-            product_image_path=generation_input_path,
-            **generation_kwargs,
-        )
+        if generation_mode == "scene_generation":
+            background_prompt = build_scene_background_prompt(
+                scene=generate_payload.scene,
+                style=generate_payload.style,
+                overrides=generate_payload.prompt_overrides,
+            )
+            background_path, background_metadata_path, background_engine = await generate_ai_image(
+                f"{task.jobId}-scene-background",
+                background_prompt,
+                generate_payload.size,
+                generate_payload.output_format,
+                generation_mode="scene_generation",
+            )
+            image_path, metadata_path = render_scene_marketing_image(
+                task.jobId,
+                background_path,
+                generation_input_path,
+                size=generate_payload.size,
+                product_width_ratio=float(task.parameters.get("scene_product_width_ratio", 0.55)),
+                position_x_ratio=float(task.parameters.get("position_x_ratio", 0.5)),
+                position_y_ratio=float(task.parameters.get("position_y_ratio", 0.58)),
+            )
+            engine = f"{background_engine}+pillow"
+            printed_design.update(
+                {
+                    "background_generated": True,
+                    "product_composited": True,
+                    "background_path": str(background_path),
+                    "background_metadata_path": str(background_metadata_path),
+                    "path": str(image_path),
+                    "metadata_path": str(metadata_path),
+                }
+            )
+        else:
+            image_path, metadata_path, engine = await generate_ai_image(
+                task.jobId,
+                prompt,
+                generate_payload.size,
+                generate_payload.output_format,
+                product_image_path=generation_input_path,
+                **generation_kwargs,
+            )
         result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path, asset_key=task.output.assetKey if task.output else None)
         result_url = f"/outputs/{task.jobId}/{image_path.name}"
         storage_result = await upload_result(image_path, result.assetKey, local_url=result_url, output=task.output)

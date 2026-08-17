@@ -23,11 +23,15 @@ from app.services.task_store import create_task, load_task, load_task_payload  #
 
 
 def _make_product(path: Path) -> None:
-    image = Image.new("RGB", (220, 180), (246, 246, 246))
+    image = Image.new("RGBA", (220, 180), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.ellipse((20, 24, 200, 140), fill=(240, 190, 20), outline=(45, 45, 45), width=4)
-    draw.rectangle((48, 105, 172, 150), fill=(240, 190, 20), outline=(45, 45, 45), width=4)
+    draw.ellipse((20, 24, 200, 140), fill=(240, 190, 20, 255), outline=(45, 45, 45, 255), width=4)
+    draw.rectangle((48, 105, 172, 150), fill=(240, 190, 20, 255), outline=(45, 45, 45, 255), width=4)
     image.save(path, format="PNG")
+
+
+def _make_opaque_product(path: Path) -> None:
+    Image.new("RGB", (220, 180), (240, 190, 20)).save(path, format="PNG")
 
 
 def _verify_img2img_input_sizing(root: Path) -> None:
@@ -105,7 +109,10 @@ async def main() -> None:
             output_dir = settings.output_dir / task_id
             output_dir.mkdir(parents=True, exist_ok=True)
             image_path = output_dir / f"result.{output_format}"
-            Image.open(product_image_path).convert("RGB").save(image_path, format=output_format.upper())
+            if product_image_path is None:
+                Image.new("RGB", (512, 512), (84, 102, 116)).save(image_path, format=output_format.upper())
+            else:
+                Image.open(product_image_path).convert("RGB").save(image_path, format=output_format.upper())
             metadata_path = output_dir / "metadata.json"
             metadata_path.write_text(json.dumps({"engine": "mock"}), encoding="utf-8")
             return image_path, metadata_path, "mock"
@@ -135,19 +142,35 @@ async def main() -> None:
             assert scene_task["payload"]["generation_mode"] == "scene_generation"
             assert scene_task["payload"]["scene_generation_used"] is True
             assert scene_task["payload"]["product_reference_used"] is True
-            assert scene_task["payload"]["denoise"] == settings.comfyui_scene_generation_denoise
+            assert scene_task["payload"]["scene_generation_strategy"] == "generated_background_composite"
+            assert scene_task["payload"]["background_generated"] is True
+            assert scene_task["payload"]["product_composited"] is True
+            assert scene_task["payload"]["denoise"] is None
             assert scene_task["payload"]["business_protocol"]["scene"] == "clean industrial warehouse marketing background"
             assert scene_task["payload"]["business_protocol"]["style"] == "realistic commercial PPE product photography"
-            assert scene_task["payload"]["business_protocol"]["denoise"] == settings.comfyui_scene_generation_denoise
-            assert captured["scene-generation-success"]["generation_mode"] == "scene_generation"
-            assert captured["scene-generation-success"]["product_image_path"] == str(product_path)
-            assert "exactly one industrial safety helmet" in str(captured["scene-generation-success"]["prompt"])
+            assert captured["scene-generation-success-scene-background"]["generation_mode"] == "scene_generation"
+            assert captured["scene-generation-success-scene-background"]["product_image_path"] is None
+            assert "empty foreground space" in str(captured["scene-generation-success-scene-background"]["prompt"])
 
             missing_product = await execute(
                 _task("scene-generation-missing-product", {"generation_mode": "scene_generation"})
             )
             assert missing_product["record"].status == TaskStatus.failed
             assert missing_product["payload"]["business_error"]["errorCode"] == "AI_400_INPUT_INVALID"
+
+            opaque_product_path = root / "opaque-helmet.png"
+            _make_opaque_product(opaque_product_path)
+            opaque_product = await execute(
+                _task(
+                    "scene-generation-opaque-product",
+                    {
+                        "generation_mode": "scene_generation",
+                        "product_image": {"local_path": str(opaque_product_path)},
+                    },
+                )
+            )
+            assert opaque_product["record"].status == TaskStatus.failed
+            assert opaque_product["payload"]["business_error"]["errorCode"] == "AI_400_INPUT_INVALID"
 
             normal_task = await execute(
                 _task("scene-generation-normal-regression", {"product_image": {"local_path": str(product_path)}})
