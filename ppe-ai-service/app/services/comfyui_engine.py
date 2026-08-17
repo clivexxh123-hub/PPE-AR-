@@ -1,10 +1,12 @@
 ﻿import asyncio
 import json
 import random
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import httpx
+from PIL import Image, UnidentifiedImageError
 
 from app.core.config import ensure_storage_dirs, settings
 
@@ -21,6 +23,50 @@ def _parse_size(size: str) -> tuple[int, int]:
         return width, height
     except (ValueError, AttributeError):
         return 1024, 1024
+
+
+def prepare_img2img_input(
+    image_path: Path,
+    size: str,
+    destination: Path,
+) -> dict[str, int | str]:
+    """Fit an img2img input into the requested canvas without stretching it."""
+    if not image_path.exists() or not image_path.is_file():
+        raise ComfyUIError(f"Input image does not exist: {image_path}")
+
+    target_width, target_height = _parse_size(size)
+    try:
+        with Image.open(image_path) as source:
+            source.load()
+            original_width, original_height = source.size
+            source_rgba = source.convert("RGBA")
+    except (OSError, UnidentifiedImageError) as exc:
+        raise ComfyUIError(f"Unable to read input image: {image_path}") from exc
+
+    scale = min(target_width / original_width, target_height / original_height)
+    content_width = max(1, round(original_width * scale))
+    content_height = max(1, round(original_height * scale))
+    resized = source_rgba.resize(
+        (content_width, content_height),
+        Image.Resampling.LANCZOS,
+    )
+
+    canvas = Image.new("RGBA", (target_width, target_height), (255, 255, 255, 255))
+    offset_x = (target_width - content_width) // 2
+    offset_y = (target_height - content_height) // 2
+    canvas.alpha_composite(resized, dest=(offset_x, offset_y))
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    canvas.convert("RGB").save(destination, format="PNG")
+    return {
+        "method": "contain_center_pad",
+        "original_width": original_width,
+        "original_height": original_height,
+        "processed_width": target_width,
+        "processed_height": target_height,
+        "content_width": content_width,
+        "content_height": content_height,
+    }
 
 
 def _resolve_workflow_path(workflow_path: Path) -> Path:
@@ -220,28 +266,35 @@ async def generate_comfyui_image(
     )
     timeout = httpx.Timeout(settings.comfyui_timeout_seconds)
     comfyui_image_name: str | None = None
-    async with httpx.AsyncClient(base_url=settings.comfyui_base_url, timeout=timeout) as client:
+    input_preprocessing: dict[str, int | str] | None = None
+    with tempfile.TemporaryDirectory(prefix=f"ppe-img2img-{task_id}-") as temp_dir:
+        prepared_image_path: Path | None = None
         if product_image_path is not None:
-            comfyui_image_name = await _upload_input_image(client, product_image_path, task_id)
-        workflow = _patch_workflow(
-            _load_workflow(workflow_path),
-            task_id,
-            prompt,
-            size,
-            workflow_generation_mode,
-            comfyui_image_name,
-            negative_prompt=negative_prompt,
-            denoise=generation_denoise,
-        )
-        queue_response = await client.post("/prompt", json={"prompt": workflow, "client_id": task_id})
-        queue_response.raise_for_status()
-        prompt_id = queue_response.json().get("prompt_id")
-        if not prompt_id:
-            raise ComfyUIError(f"ComfyUI 未返回 prompt_id：{queue_response.text}")
+            prepared_image_path = Path(temp_dir) / "img2img_input.png"
+            input_preprocessing = prepare_img2img_input(product_image_path, size, prepared_image_path)
 
-        history_item, image_info = await _wait_for_image(client, prompt_id)
-        image_response = await client.get("/view", params=image_info)
-        image_response.raise_for_status()
+        async with httpx.AsyncClient(base_url=settings.comfyui_base_url, timeout=timeout) as client:
+            if prepared_image_path is not None:
+                comfyui_image_name = await _upload_input_image(client, prepared_image_path, task_id)
+            workflow = _patch_workflow(
+                _load_workflow(workflow_path),
+                task_id,
+                prompt,
+                size,
+                workflow_generation_mode,
+                comfyui_image_name,
+                negative_prompt=negative_prompt,
+                denoise=generation_denoise,
+            )
+            queue_response = await client.post("/prompt", json={"prompt": workflow, "client_id": task_id})
+            queue_response.raise_for_status()
+            prompt_id = queue_response.json().get("prompt_id")
+            if not prompt_id:
+                raise ComfyUIError(f"ComfyUI 未返回 prompt_id：{queue_response.text}")
+
+            history_item, image_info = await _wait_for_image(client, prompt_id)
+            image_response = await client.get("/view", params=image_info)
+            image_response.raise_for_status()
 
     source_name = image_info["filename"]
     ext = Path(source_name).suffix.lower().lstrip(".") or output_format.lower().lstrip(".") or "png"
@@ -257,6 +310,7 @@ async def generate_comfyui_image(
         "scene_generation_used": requested_generation_mode == "scene_generation",
         "product_image_used": product_image_path is not None,
         "product_image_local_path": str(product_image_path) if product_image_path is not None else None,
+        "input_preprocessing": input_preprocessing,
         "comfyui_input_image": comfyui_image_name,
         "comfyui_base_url": settings.comfyui_base_url,
         "workflow_path": str(workflow_path),

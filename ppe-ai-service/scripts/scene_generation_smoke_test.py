@@ -18,6 +18,7 @@ from app.api import routes  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.schemas.business_protocol import GenerationTaskInput  # noqa: E402
 from app.schemas.tasks import TaskStatus  # noqa: E402
+from app.services.comfyui_engine import prepare_img2img_input  # noqa: E402
 from app.services.task_store import create_task, load_task, load_task_payload  # noqa: E402
 
 
@@ -27,6 +28,23 @@ def _make_product(path: Path) -> None:
     draw.ellipse((20, 24, 200, 140), fill=(240, 190, 20), outline=(45, 45, 45), width=4)
     draw.rectangle((48, 105, 172, 150), fill=(240, 190, 20), outline=(45, 45, 45), width=4)
     image.save(path, format="PNG")
+
+
+def _verify_img2img_input_sizing(root: Path) -> None:
+    source_path = root / "large-helmet.png"
+    prepared_path = root / "prepared-img2img-input.png"
+    Image.new("RGB", (2048, 1024), (240, 190, 20)).save(source_path, format="PNG")
+
+    details = prepare_img2img_input(source_path, "512x512", prepared_path)
+    with Image.open(prepared_path) as prepared:
+        assert prepared.size == (512, 512)
+
+    assert details["original_width"] == 2048
+    assert details["original_height"] == 1024
+    assert details["processed_width"] == 512
+    assert details["processed_height"] == 512
+    assert details["content_width"] == 512
+    assert details["content_height"] == 256
 
 
 def _task(job_id: str, parameters: dict) -> GenerationTaskInput:
@@ -59,6 +77,7 @@ async def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="scene-generation-smoke-") as temp_dir:
         root = Path(temp_dir)
+        _verify_img2img_input_sizing(root)
         settings.storage_dir = root / "storage"
         settings.input_dir = settings.storage_dir / "inputs"
         settings.output_dir = settings.storage_dir / "outputs"
