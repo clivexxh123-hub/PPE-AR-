@@ -1,7 +1,7 @@
 import ipaddress
 import socket
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 
 _SENSITIVE_FIELD_NAMES = {
@@ -25,6 +25,26 @@ def redact_headers(headers: dict[str, Any] | None) -> dict[str, str]:
     if not isinstance(headers, dict):
         return {}
     return {str(key): "[REDACTED]" for key in headers}
+
+
+def redact_url(url: str | None) -> str | None:
+    """Remove URL userinfo and query/fragment values before persisting metadata."""
+    if not url:
+        return url
+    parsed = urlsplit(str(url))
+    if not parsed.scheme or not parsed.hostname:
+        return "[REDACTED_URL]"
+
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    netloc = f"{host}:{port}" if port is not None else host
+    query = "[REDACTED]" if parsed.query else ""
+    return urlunsplit((parsed.scheme, netloc, parsed.path, query, ""))
 
 
 def redact_sensitive_data(value: Any) -> Any:
