@@ -259,6 +259,18 @@ def _validated_logo_image_path(input_asset_validation: dict[str, Any] | None) ->
     return _validated_image_path(input_asset_validation, "logo_image")
 
 
+def _placement_summary(metadata_path: Path) -> dict[str, Any]:
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {
+        key: metadata[key]
+        for key in ("placement_mode", "final_x_ratio", "final_y_ratio", "final_width_ratio")
+        if key in metadata
+    }
+
+
 def _prepare_generation_input(
     task: GenerationTaskInput,
     input_asset_validation: dict[str, Any] | None,
@@ -276,28 +288,41 @@ def _prepare_generation_input(
             "reason": f"missing_validated_{'_and_'.join(missing)}",
         }
 
-    position_x_ratio = float(task.parameters.get("position_x_ratio", 0.5))
-    position_y_ratio = float(task.parameters.get("position_y_ratio", 0.5))
-    logo_width_ratio = float(task.parameters.get("logo_width_ratio", 0.25))
+    position = str(task.parameters["position"]) if task.parameters.get("position") is not None else None
+    position_x_ratio = (
+        float(task.parameters["position_x_ratio"])
+        if task.parameters.get("position_x_ratio") is not None
+        else None
+    )
+    position_y_ratio = (
+        float(task.parameters["position_y_ratio"])
+        if task.parameters.get("position_y_ratio") is not None
+        else None
+    )
+    logo_width_ratio = (
+        float(task.parameters["logo_width_ratio"])
+        if task.parameters.get("logo_width_ratio") is not None
+        else (float(task.parameters["scale"]) if task.parameters.get("scale") is not None else None)
+    )
     opacity = float(task.parameters.get("opacity", 1.0))
     printed_design_path, printed_metadata_path = render_printed_design(
         f"{task.jobId}-printed-design",
         product_image_path,
         logo_image_path,
+        position=position,
         position_x_ratio=position_x_ratio,
         position_y_ratio=position_y_ratio,
         logo_width_ratio=logo_width_ratio,
         opacity=opacity,
     )
+    placement = _placement_summary(printed_metadata_path)
     return printed_design_path, {
         "printed_design_used": True,
         "path": str(printed_design_path),
         "metadata_path": str(printed_metadata_path),
         "product_image_path": str(product_image_path),
         "logo_image_path": str(logo_image_path),
-        "position_x_ratio": position_x_ratio,
-        "position_y_ratio": position_y_ratio,
-        "logo_width_ratio": logo_width_ratio,
+        **placement,
         "opacity": opacity,
     }
 
@@ -417,10 +442,18 @@ def _parameters_to_logo_request(parameters: dict[str, Any]) -> LogoPlaceRequest:
     return LogoPlaceRequest(
         base_image=_image_source_from_parameter(base_value),
         logo_image=_image_source_from_parameter(parameters.get("logo_image")),
-        position=str(parameters.get("position", "center")),
-        scale=float(parameters.get("scale", 0.25)),
-        position_x_ratio=float(parameters.get("position_x_ratio", 0.5)),
-        position_y_ratio=float(parameters.get("position_y_ratio", 0.5)),
+        position=str(parameters["position"]) if parameters.get("position") is not None else None,
+        scale=float(parameters["scale"]) if parameters.get("scale") is not None else None,
+        position_x_ratio=(
+            float(parameters["position_x_ratio"])
+            if parameters.get("position_x_ratio") is not None
+            else None
+        ),
+        position_y_ratio=(
+            float(parameters["position_y_ratio"])
+            if parameters.get("position_y_ratio") is not None
+            else None
+        ),
         logo_width_ratio=(
             float(parameters["logo_width_ratio"])
             if parameters.get("logo_width_ratio") is not None
@@ -652,9 +685,14 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
                 task.jobId,
                 base_path,
                 logo_path,
+                position=logo_payload.position,
                 position_x_ratio=logo_payload.position_x_ratio,
                 position_y_ratio=logo_payload.position_y_ratio,
-                logo_width_ratio=logo_payload.logo_width_ratio or logo_payload.scale,
+                logo_width_ratio=(
+                    logo_payload.logo_width_ratio
+                    if logo_payload.logo_width_ratio is not None
+                    else logo_payload.scale
+                ),
                 opacity=logo_payload.opacity,
             )
             printed_design = {
@@ -663,10 +701,8 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
                 "metadata_path": str(metadata_path),
                 "product_image_path": str(base_path),
                 "logo_image_path": str(logo_path),
-                "position_x_ratio": logo_payload.position_x_ratio,
-                "position_y_ratio": logo_payload.position_y_ratio,
-                "logo_width_ratio": logo_payload.logo_width_ratio or logo_payload.scale,
                 "opacity": logo_payload.opacity,
+                **_placement_summary(metadata_path),
             }
             completion_message = "业务印刷设计图已生成。"
         else:
@@ -931,9 +967,14 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
                     task_id,
                     base_path,
                     logo_path,
+                    position=payload.position,
                     position_x_ratio=payload.position_x_ratio,
                     position_y_ratio=payload.position_y_ratio,
-                    logo_width_ratio=payload.logo_width_ratio or payload.scale,
+                    logo_width_ratio=(
+                        payload.logo_width_ratio
+                        if payload.logo_width_ratio is not None
+                        else payload.scale
+                    ),
                     opacity=payload.opacity,
                 )
         else:
