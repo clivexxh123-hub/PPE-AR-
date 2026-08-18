@@ -72,7 +72,13 @@ async def generate_image(payload: GenerateRequest, background_tasks: BackgroundT
     tags=["AI 图片生成"],
 )
 async def create_business_ai_task(payload: GenerationTaskInput, background_tasks: BackgroundTasks) -> BusinessTaskResponse:
+    if settings.ai_task_require_formal_contract:
+        try:
+            payload.validate_formal_contract()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     request_payload = redact_sensitive_data(payload.model_dump(mode="json"))
+    _redact_input_asset_urls(request_payload)
     record = create_task(f"ai.business_{payload.type}", request_payload, task_id=payload.jobId)
     save_task(record, extra=_business_extra(payload))
     if bool(payload.parameters.get("sync", False)):
@@ -178,27 +184,54 @@ def _image_url_from_parameter(parameters: dict[str, Any], key: str) -> str | Non
 def _assets_by_role(task: GenerationTaskInput) -> dict[str, list[dict[str, Any]]]:
     assets: dict[str, list[dict[str, Any]]] = {}
     for asset in task.inputAssets:
-        assets.setdefault(asset.role, []).append(asset.model_dump(mode="json"))
+        item = asset.model_dump(mode="json")
+        if item.get("url"):
+            item["url"] = redact_url(str(item["url"]))
+        assets.setdefault(asset.role, []).append(item)
     return assets
+
+
+def _redact_input_asset_urls(payload: dict[str, Any]) -> None:
+    assets = payload.get("inputAssets")
+    if not isinstance(assets, list):
+        return
+    for asset in assets:
+        if isinstance(asset, dict) and asset.get("url"):
+            asset["url"] = redact_url(str(asset["url"]))
+
+
+def _parameters_with_input_assets(task: GenerationTaskInput) -> dict[str, Any]:
+    """Adapt frozen inputAssets URLs to the existing image-source parameter shape."""
+    parameters = dict(task.parameters)
+    for asset in task.inputAssets:
+        if asset.url is None:
+            continue
+        source = {"url": str(asset.url)}
+        if asset.role == "product_reference" and not parameters.get("product_image"):
+            parameters["product_image"] = source
+        elif asset.role == "logo" and not parameters.get("logo_image"):
+            parameters["logo_image"] = source
+    return parameters
 
 
 def _asset_warnings(task: GenerationTaskInput) -> list[dict[str, str]]:
     roles = {asset.role for asset in task.inputAssets}
-    product_image_url = _image_url_from_parameter(task.parameters, "product_image")
-    logo_image_url = _image_url_from_parameter(task.parameters, "logo_image")
+    parameters = _parameters_with_input_assets(task)
+    product_image_url = _image_url_from_parameter(parameters, "product_image")
+    logo_image_url = _image_url_from_parameter(parameters, "logo_image")
     warnings: list[dict[str, str]] = []
     if "product_reference" in roles and not product_image_url:
         warnings.append(
             {
                 "code": "MISSING_PRODUCT_IMAGE_URL",
-                "message": "inputAssets 包含 product_reference，但 parameters.product_image.url 缺失；当前按文生图继续。",
+                "message": "inputAssets 包含 product_reference，但未提供可用产品图片 URL；当前按文生图继续。",
             }
         )
     if "logo" in roles and not logo_image_url:
         warnings.append(
             {
                 "code": "MISSING_LOGO_IMAGE_URL",
-                "message": "inputAssets 包含 logo，但 parameters.logo_image.url 缺失；当前按文生图继续。",
+                "message": "inputAssets 包含 logo，但未提供可用 Logo 图片 URL；当前按文生图继续。",
             }
         )
     return warnings
@@ -412,8 +445,9 @@ def _business_extra(
     input_asset_validation: dict[str, Any] | None = None,
     printed_design: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    product_image_url = _image_url_from_parameter(task.parameters, "product_image")
-    logo_image_url = _image_url_from_parameter(task.parameters, "logo_image")
+    parameters = _parameters_with_input_assets(task)
+    product_image_url = _image_url_from_parameter(parameters, "product_image")
+    logo_image_url = _image_url_from_parameter(parameters, "logo_image")
     generation_mode = str(task.parameters.get("generation_mode", "")).strip() or None
     human_wearing_used = bool(printed_design and printed_design.get("human_wearing_used"))
     scene_generation_used = generation_mode == "scene_generation"
@@ -439,7 +473,7 @@ def _business_extra(
             "modelProfileId": task.modelProfileId,
             "workflowVersion": task.workflowVersion,
             "operation": task.type,
-            "inputAssets": [asset.model_dump(mode="json") for asset in task.inputAssets],
+            "inputAssets": [asset.model_dump(mode="json", exclude={"url"}) | ({"url": redact_url(str(asset.url))} if asset.url else {}) for asset in task.inputAssets],
             "inputAssetsByRole": _assets_by_role(task),
             "raw_callback": redact_url(task.callback),
             "callback_source": "GenerationTaskInput.callback",
@@ -455,8 +489,8 @@ def _business_extra(
             "denoise": denoise,
             "parameters": redact_sensitive_data(task.parameters),
             "image_urls": {
-                "product_image": product_image_url,
-                "logo_image": logo_image_url,
+                "product_image": redact_url(product_image_url),
+                "logo_image": redact_url(logo_image_url),
             },
             "output": {
                 "assetKey": task.output.assetKey,
@@ -533,13 +567,14 @@ def _business_response(record) -> BusinessTaskResponse:
     error = raw.get("business_error") or {}
     result_payload = raw.get("business_result")
     result = TaskResult.model_validate(result_payload) if isinstance(result_payload, dict) else None
+    formal_response = settings.ai_task_require_formal_contract and protocol.get("output") is not None
     return BusinessTaskResponse(
         jobId=str(protocol.get("jobId") or record.task_id),
         task_id=record.task_id,
         status=record.status,
         message=record.message,
-        result_url=record.result_url,
-        metadata_url=record.metadata_url,
+        result_url=None if formal_response else record.result_url,
+        metadata_url=None if formal_response else record.metadata_url,
         errorCode=error.get("errorCode"),
         errorMessage=error.get("errorMessage"),
         retryable=error.get("retryable"),
@@ -559,6 +594,7 @@ async def _report_business_event(
 ) -> dict[str, Any]:
     event = WorkerCallbackEvent(
         jobId=task.jobId,
+        attempt=task.attempt,
         status=status,
         progress=progress,
         elapsedMs=int((time.monotonic() - started_at) * 1000),
@@ -569,7 +605,7 @@ async def _report_business_event(
         workflowVersion=task.workflowVersion,
         result=result,
     )
-    return await send_worker_callback(task.callback, event)
+    return await send_worker_callback(task.callback, event, hmac_secret=settings.callback_hmac_secret)
 
 
 async def _run_business_task(task: GenerationTaskInput) -> None:
@@ -592,7 +628,7 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
         callback_result = await _report_business_event(task, TaskStatus.running, started_at, progress=10)
         save_task(record, extra=_business_extra(task, callback_result=callback_result))
 
-        logo_payload = _parameters_to_logo_request(task.parameters)
+        logo_payload = _parameters_to_logo_request(_parameters_with_input_assets(task))
         if logo_payload.logo_image is None:
             raise ValueError("parameters.logo_image 是必填图片输入。")
         input_asset_validation = {
@@ -708,7 +744,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         callback_result = await _report_business_event(task, TaskStatus.running, started_at, progress=10)
         save_task(record, extra=_business_extra(task, callback_result=callback_result))
 
-        generate_payload = _parameters_to_generate_request(task.parameters)
+        generate_payload = _parameters_to_generate_request(_parameters_with_input_assets(task))
         input_asset_validation = await validate_generate_request_images(generate_payload)
         save_task(record, extra=_business_extra(task, callback_result=callback_result, input_asset_validation=input_asset_validation))
         if generation_mode == "human_wearing":

@@ -13,6 +13,13 @@ if load_dotenv is not None:
     load_dotenv(BASE_DIR / ".env")
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Settings(BaseModel):
     app_name: str = "PPE AI 营销物料生成服务"
     app_version: str = "0.1.0"
@@ -47,6 +54,8 @@ class Settings(BaseModel):
     comfyui_poll_interval_seconds: float = float(os.getenv("COMFYUI_POLL_INTERVAL_SECONDS", "1.5"))
     comfyui_poll_attempts: int = int(os.getenv("COMFYUI_POLL_ATTEMPTS", "200"))
     task_center_base_url: str | None = os.getenv("TASK_CENTER_BASE_URL")
+    callback_hmac_secret: str | None = os.getenv("PPE_CALLBACK_HMAC_SECRET") or None
+    ai_task_require_formal_contract: bool = _env_flag("AI_TASK_REQUIRE_FORMAL_CONTRACT")
     storage_backend: str = os.getenv("STORAGE_BACKEND", "local").strip().lower()
     comfyui_default_negative_prompt: str = os.getenv(
         "COMFYUI_NEGATIVE_PROMPT",
