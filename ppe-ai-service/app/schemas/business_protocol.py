@@ -11,6 +11,8 @@ class TaskInputAsset(BaseModel):
     assetId: str = Field(description="业务数据库资产 ID，只用于追踪审计，AI 服务不查询业务数据库。")
     role: str = Field(description="资产角色，例如 product_reference 或 logo；未知 role 原样记录。")
     version: int = Field(default=1, ge=0, description="资产版本。")
+    url: HttpUrl | None = Field(default=None, description="业务端签发的直接 GET 输入资源 URL。")
+    expiresAt: str | None = Field(default=None, description="输入资源 URL 过期时间，ISO 字符串。")
 
     @field_validator("assetId", "role")
     @classmethod
@@ -52,6 +54,7 @@ class WorkerCallbackEvent(BaseModel):
     model_config = ConfigDict(title="业务任务回调事件")
 
     jobId: str = Field(description="业务任务 ID。")
+    attempt: int = Field(ge=0, description="本次任务尝试次数。")
     status: TaskStatus = Field(description="任务状态。")
     progress: int | None = Field(default=None, ge=0, le=100, description="任务进度。")
     elapsedMs: int | None = Field(default=None, ge=0, description="任务耗时，毫秒。")
@@ -114,6 +117,58 @@ class GenerationTaskInput(BaseModel):
         if normalized_mode:
             self.parameters = {**self.parameters, "generation_mode": normalized_mode}
         return self
+
+    def validate_formal_contract(self) -> None:
+        """Validate fields that are mandatory only for the frozen back-end contract."""
+        required_fields = {
+            "jobId",
+            "type",
+            "tenantId",
+            "traceId",
+            "attempt",
+            "modelProfileId",
+            "workflowVersion",
+            "inputAssets",
+            "parameters",
+            "callback",
+            "output",
+        }
+        missing = sorted(required_fields - self.model_fields_set)
+        if missing:
+            raise ValueError(f"正式 /ai/tasks 协议缺少必传字段：{', '.join(missing)}。")
+        if not self.callback or not self.callback.strip():
+            raise ValueError("正式 /ai/tasks 协议要求 callback 为非空 HTTP(S) URL。")
+        if self.output is None:
+            raise ValueError("正式 /ai/tasks 协议要求 output。")
+
+        output_fields = {"assetKey", "uploadUrl", "method", "requiredHeaders", "expiresAt"}
+        missing_output = output_fields - self.output.model_fields_set
+        if missing_output:
+            raise ValueError(f"正式 output 缺少必传字段：{', '.join(sorted(missing_output))}。")
+        if not self.output.expiresAt:
+            raise ValueError("正式 output.expiresAt 不能为空。")
+
+        missing_asset_fields = [
+            asset.assetId
+            for asset in self.inputAssets
+            if asset.url is None or not asset.expiresAt
+        ]
+        if missing_asset_fields:
+            raise ValueError(
+                "正式 inputAssets 每项都要求 url 与 expiresAt；缺失资产："
+                + ", ".join(missing_asset_fields)
+                + "。"
+            )
+
+        roles = {asset.role for asset in self.inputAssets}
+        required_roles = {
+            "image_generation": {"product_reference"},
+            "logo_remove_bg": {"logo"},
+            "print_render": {"product_reference", "logo"},
+        }[self.type]
+        missing_roles = required_roles - roles
+        if missing_roles:
+            raise ValueError(f"{self.type} 缺少必需 inputAssets role：{', '.join(sorted(missing_roles))}。")
 
     @field_validator("jobId", "tenantId", "traceId", "modelProfileId", "workflowVersion")
     @classmethod

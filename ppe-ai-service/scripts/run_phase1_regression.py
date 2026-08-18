@@ -63,6 +63,10 @@ def main() -> int:
                 "scripts/security_smoke_test.py",
                 "scripts/async_task_lifecycle_smoke_test.py",
                 "scripts/human_wearing_smoke_test.py",
+                "scripts/formal_task_protocol_smoke_test.py",
+                "scripts/callback_protocol_smoke_test.py",
+                "scripts/presigned_upload_protocol_smoke_test.py",
+                "scripts/image_url_security_smoke_test.py",
             ],
         ),
         Check("/ai/generate mock 回归", [PYTHON, "scripts/api_smoke_test.py"], engine="mock"),
@@ -72,6 +76,10 @@ def main() -> int:
         Check("metadata 脱敏与 SSRF 防护", [PYTHON, "scripts/security_smoke_test.py"], engine="mock"),
         Check("异步任务状态回归", [PYTHON, "scripts/async_task_lifecycle_smoke_test.py"], engine="mock"),
         Check("human_wearing 回归", [PYTHON, "scripts/human_wearing_smoke_test.py"], engine="mock"),
+        Check("正式任务协议适配", [PYTHON, "scripts/formal_task_protocol_smoke_test.py"], engine="mock"),
+        Check("签名 callback 协议", [PYTHON, "scripts/callback_protocol_smoke_test.py"], engine="mock"),
+        Check("预签名 PUT 上传协议", [PYTHON, "scripts/presigned_upload_protocol_smoke_test.py"], engine="mock"),
+        Check("输入图片 URL 安全", [PYTHON, "scripts/image_url_security_smoke_test.py"], engine="mock"),
         Check("Git diff 检查", ["git", "diff", "--check"]),
     ]
     skipped = []
