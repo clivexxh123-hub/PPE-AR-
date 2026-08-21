@@ -5,6 +5,24 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, mod
 from app.schemas.tasks import TaskStatus
 
 
+_ASSET_PARAMETER_FIELDS = {
+    "product_reference": "product_image",
+    "printed_design": "product_image",
+    "logo": "logo_image",
+    "scene": "scene_image",
+}
+
+
+def _parameter_url(parameters: dict[str, Any], field: str) -> str | None:
+    value = parameters.get(field)
+    if isinstance(value, dict):
+        value = value.get("url")
+    if value is None:
+        return None
+    url = str(value).strip()
+    return url or None
+
+
 class TaskInputAsset(BaseModel):
     model_config = ConfigDict(title="业务输入资产")
 
@@ -161,14 +179,39 @@ class GenerationTaskInput(BaseModel):
             )
 
         roles = {asset.role for asset in self.inputAssets}
-        required_roles = {
-            "image_generation": {"product_reference"},
-            "logo_remove_bg": {"logo"},
-            "print_render": {"product_reference", "logo"},
-        }[self.type]
-        missing_roles = required_roles - roles
-        if missing_roles:
-            raise ValueError(f"{self.type} 缺少必需 inputAssets role：{', '.join(sorted(missing_roles))}。")
+        if self.type == "image_generation":
+            if {"product_reference", "printed_design"} <= roles:
+                raise ValueError("image_generation 不能同时包含 product_reference 与 printed_design。")
+            if roles and not ({"product_reference", "printed_design"} & roles):
+                raise ValueError(
+                    "image_generation 的非空 inputAssets 必须包含 product_reference 或 printed_design。"
+                )
+        else:
+            required_roles = {
+                "logo_remove_bg": {"logo"},
+                "print_render": {"product_reference", "logo"},
+            }[self.type]
+            missing_roles = required_roles - roles
+            if missing_roles:
+                raise ValueError(f"{self.type} 缺少必需 inputAssets role：{', '.join(sorted(missing_roles))}。")
+
+        for role, field in _ASSET_PARAMETER_FIELDS.items():
+            matching_assets = [asset for asset in self.inputAssets if asset.role == role]
+            if not matching_assets:
+                continue
+            if len(matching_assets) > 1:
+                raise ValueError(f"正式 inputAssets 不允许重复 role：{role}。")
+            parameter_url = _parameter_url(self.parameters, field)
+            asset_url = str(matching_assets[0].url)
+            if parameter_url and parameter_url != asset_url:
+                raise ValueError(
+                    f"parameters.{field}.url 必须与 inputAssets role={role} 的 url 保持一致。"
+                )
+
+        product_asset = next((asset for asset in self.inputAssets if asset.role == "product_reference"), None)
+        base_image_url = _parameter_url(self.parameters, "base_image")
+        if product_asset is not None and base_image_url and base_image_url != str(product_asset.url):
+            raise ValueError("parameters.base_image.url 必须与 inputAssets role=product_reference 的 url 保持一致。")
 
     @field_validator("jobId", "tenantId", "traceId", "modelProfileId", "workflowVersion")
     @classmethod

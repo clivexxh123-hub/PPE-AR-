@@ -201,10 +201,21 @@ def _parameters_with_input_assets(task: GenerationTaskInput) -> dict[str, Any]:
         if asset.url is None:
             continue
         source = {"url": str(asset.url)}
-        if asset.role == "product_reference" and not parameters.get("product_image"):
-            parameters["product_image"] = source
-        elif asset.role == "logo" and not parameters.get("logo_image"):
-            parameters["logo_image"] = source
+        field_by_role = {
+            "product_reference": "product_image",
+            "printed_design": "product_image",
+            "logo": "logo_image",
+            "scene": "scene_image",
+        }
+        field = field_by_role.get(asset.role)
+        if field is None:
+            continue
+        if settings.ai_task_require_formal_contract:
+            parameters[field] = source
+            if asset.role == "product_reference" and task.type == "print_render":
+                parameters["base_image"] = source
+        elif not parameters.get(field):
+            parameters[field] = source
     return parameters
 
 
