@@ -22,6 +22,7 @@ from app.services.image_asset_service import (
 )
 from app.services.input_adapter import resolve_image_source, save_upload
 from app.services.logo_service import normalize_logo, render_printed_design
+from app.services.logo_template_store import LogoPlacementResolution, resolve_logo_placement
 from app.services.prompt_templates import (
     PromptBuildResult,
     build_managed_prompt,
@@ -270,6 +271,33 @@ def _placement_summary(metadata_path: Path) -> dict[str, Any]:
     }
 
 
+def _manual_placement_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
+    keys = ("position", "position_x_ratio", "position_y_ratio", "logo_width_ratio", "scale", "opacity")
+    return {key: parameters[key] for key in keys if parameters.get(key) is not None}
+
+
+def _logo_template_metadata(resolution: LogoPlacementResolution, metadata_path: Path) -> dict[str, Any]:
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        metadata = {}
+    final_keys = (
+        "placement_mode",
+        "final_x_ratio",
+        "final_y_ratio",
+        "final_width_ratio",
+        "position_x_ratio",
+        "position_y_ratio",
+        "logo_width_ratio",
+        "opacity",
+        "position_x",
+        "position_y",
+        "logo_width",
+        "logo_height",
+    )
+    return resolution.metadata({key: metadata.get(key) for key in final_keys if key in metadata})
+
+
 def _prepare_generation_input(
     task: GenerationTaskInput,
     input_asset_validation: dict[str, Any] | None,
@@ -287,34 +315,21 @@ def _prepare_generation_input(
             "reason": f"missing_validated_{'_and_'.join(missing)}",
         }
 
-    position = str(task.parameters["position"]) if task.parameters.get("position") is not None else None
-    position_x_ratio = (
-        float(task.parameters["position_x_ratio"])
-        if task.parameters.get("position_x_ratio") is not None
+    template_id = (
+        str(task.parameters["logo_template_id"])
+        if task.parameters.get("logo_template_id") is not None
         else None
     )
-    position_y_ratio = (
-        float(task.parameters["position_y_ratio"])
-        if task.parameters.get("position_y_ratio") is not None
-        else None
-    )
-    logo_width_ratio = (
-        float(task.parameters["logo_width_ratio"])
-        if task.parameters.get("logo_width_ratio") is not None
-        else (float(task.parameters["scale"]) if task.parameters.get("scale") is not None else None)
-    )
-    opacity = float(task.parameters.get("opacity", 1.0))
+    placement_resolution = resolve_logo_placement(template_id, _manual_placement_parameters(task.parameters))
     printed_design_path, printed_metadata_path = render_printed_design(
         f"{task.jobId}-printed-design",
         product_image_path,
         logo_image_path,
-        position=position,
-        position_x_ratio=position_x_ratio,
-        position_y_ratio=position_y_ratio,
-        logo_width_ratio=logo_width_ratio,
-        opacity=opacity,
+        **placement_resolution.render_kwargs(),
     )
     placement = _placement_summary(printed_metadata_path)
+    template_metadata = _logo_template_metadata(placement_resolution, printed_metadata_path)
+    _append_output_metadata(printed_metadata_path, template_metadata)
     return printed_design_path, {
         "printed_design_used": True,
         "path": str(printed_design_path),
@@ -322,7 +337,7 @@ def _prepare_generation_input(
         "product_image_path": str(product_image_path),
         "logo_image_path": str(logo_image_path),
         **placement,
-        "opacity": opacity,
+        **template_metadata,
     }
 
 
@@ -446,6 +461,7 @@ def _parameters_to_logo_request(parameters: dict[str, Any]) -> LogoPlaceRequest:
     return LogoPlaceRequest(
         base_image=_image_source_from_parameter(base_value),
         logo_image=_image_source_from_parameter(parameters.get("logo_image")),
+        template_id=str(parameters["template_id"]) if parameters.get("template_id") is not None else None,
         position=str(parameters["position"]) if parameters.get("position") is not None else None,
         scale=float(parameters["scale"]) if parameters.get("scale") is not None else None,
         position_x_ratio=(
@@ -463,7 +479,7 @@ def _parameters_to_logo_request(parameters: dict[str, Any]) -> LogoPlaceRequest:
             if parameters.get("logo_width_ratio") is not None
             else None
         ),
-        opacity=float(parameters.get("opacity", 1.0)),
+        opacity=float(parameters["opacity"]) if parameters.get("opacity") is not None else None,
         output_format=str(parameters.get("output_format", "png")),
         sync=bool(parameters.get("sync", False)),
     )
@@ -656,6 +672,7 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
     started_at = time.monotonic()
     input_asset_validation: dict[str, Any] | None = None
     printed_design: dict[str, Any] | None = None
+    template_metadata: dict[str, Any] = {}
     record = load_task(task.jobId)
     if record is None:
         return
@@ -685,28 +702,26 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
             base_path = _validated_image_path(input_asset_validation, "base_image")
             if base_path is None:
                 raise ValueError("base_image 校验失败。")
+            placement_resolution = resolve_logo_placement(
+                logo_payload.template_id,
+                _manual_placement_parameters(logo_payload.model_dump()),
+            )
             image_path, metadata_path = render_printed_design(
                 task.jobId,
                 base_path,
                 logo_path,
-                position=logo_payload.position,
-                position_x_ratio=logo_payload.position_x_ratio,
-                position_y_ratio=logo_payload.position_y_ratio,
-                logo_width_ratio=(
-                    logo_payload.logo_width_ratio
-                    if logo_payload.logo_width_ratio is not None
-                    else logo_payload.scale
-                ),
-                opacity=logo_payload.opacity,
+                **placement_resolution.render_kwargs(),
             )
+            template_metadata = _logo_template_metadata(placement_resolution, metadata_path)
+            _append_output_metadata(metadata_path, template_metadata)
             printed_design = {
                 "printed_design_used": True,
                 "path": str(image_path),
                 "metadata_path": str(metadata_path),
                 "product_image_path": str(base_path),
                 "logo_image_path": str(logo_path),
-                "opacity": logo_payload.opacity,
                 **_placement_summary(metadata_path),
+                **template_metadata,
             }
             completion_message = "业务印刷设计图已生成。"
         else:
@@ -736,6 +751,9 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
             input_asset_validation=input_asset_validation,
             printed_design=printed_design,
         )
+        if template_metadata:
+            extra.update(template_metadata)
+            extra["business_protocol"].update(template_metadata)
         _append_output_metadata(metadata_path, extra)
         save_task(record, extra=extra)
     except Exception as exc:
@@ -969,6 +987,7 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
     record = load_task(task_id)
     if record is None:
         return
+    template_metadata: dict[str, Any] = {}
     try:
         record.status = TaskStatus.running
         record.message = "正在处理 Logo 图片。"
@@ -979,20 +998,18 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
             if base_path is None:
                 image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
             else:
+                placement_resolution = resolve_logo_placement(
+                    payload.template_id,
+                    _manual_placement_parameters(payload.model_dump()),
+                )
                 image_path, metadata_path = render_printed_design(
                     task_id,
                     base_path,
                     logo_path,
-                    position=payload.position,
-                    position_x_ratio=payload.position_x_ratio,
-                    position_y_ratio=payload.position_y_ratio,
-                    logo_width_ratio=(
-                        payload.logo_width_ratio
-                        if payload.logo_width_ratio is not None
-                        else payload.scale
-                    ),
-                    opacity=payload.opacity,
+                    **placement_resolution.render_kwargs(),
                 )
+                template_metadata = _logo_template_metadata(placement_resolution, metadata_path)
+                _append_output_metadata(metadata_path, template_metadata)
         else:
             image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
         record.status = TaskStatus.succeeded
@@ -1001,7 +1018,7 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
         record.metadata_path = str(metadata_path)
         record.result_url = f"/outputs/{task_id}/{image_path.name}"
         record.metadata_url = f"/outputs/{task_id}/{metadata_path.name}"
-        save_task(record)
+        save_task(record, extra=template_metadata)
     except Exception as exc:
         record.status = TaskStatus.failed
         record.message = "Logo 处理失败。"
