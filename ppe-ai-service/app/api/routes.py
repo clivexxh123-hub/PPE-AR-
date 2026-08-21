@@ -496,6 +496,8 @@ def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateReque
         ),
         scene=str(parameters.get("scene", "")).strip(),
         style=str(parameters.get("style", "")).strip(),
+        view=str(parameters["view"]).strip() if parameters.get("view") is not None else None,
+        framing=str(parameters["framing"]).strip() if parameters.get("framing") is not None else None,
         size=str(parameters.get("size", "512x512")).strip(),
         prompt_overrides=prompt_overrides,
         output_format=str(parameters.get("output_format", "png")).strip(),
@@ -894,6 +896,8 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             overrides=generate_payload.prompt_overrides,
             template_id=generate_payload.template_id,
             generation_mode=generation_mode,
+            view=generate_payload.view,
+            framing=generate_payload.framing,
         )
         prompt = prompt_result.prompt
         generation_kwargs = (
@@ -911,6 +915,8 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 template_id=prompt_result.template_id,
                 selection_rule=prompt_result.selection_rule,
                 prompt=background_prompt,
+                view=prompt_result.view,
+                framing=prompt_result.framing,
             )
             background_path, background_metadata_path, background_engine = await generate_ai_image(
                 f"{task.jobId}-scene-background",
@@ -1017,6 +1023,8 @@ async def _run_generate_task(task_id: str, payload: GenerateRequest) -> None:
             style=payload.style,
             overrides=payload.prompt_overrides,
             template_id=payload.template_id,
+            view=payload.view,
+            framing=payload.framing,
         )
         image_path, metadata_path, engine = await generate_ai_image(
             task_id,

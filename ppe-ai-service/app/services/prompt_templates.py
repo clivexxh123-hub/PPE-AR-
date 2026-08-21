@@ -45,6 +45,12 @@ _TEMPLATE_IDS_BY_MODE = {
 }
 _KNOWN_TEMPLATE_IDS = frozenset(_TEMPLATE_IDS_BY_MODE.values())
 _CORE_FIELDS = frozenset({"product_name", "product_category", "product_keywords", "scene", "style"})
+_COMPOSITION_INSTRUCTIONS = {
+    ("front", "half_body"): "Composition: front-facing person, half-body framing from the waist up.",
+    ("front", "full_body"): "Composition: front-facing person, full-body framing with the complete figure visible.",
+    ("slight_side", "half_body"): "Composition: person in a slight side view, half-body framing from the waist up.",
+    ("slight_side", "full_body"): "Composition: person in a slight side view, full-body framing with the complete figure visible.",
+}
 
 
 @dataclass(frozen=True)
@@ -52,6 +58,8 @@ class PromptBuildResult:
     template_id: str
     selection_rule: str
     prompt: str
+    view: str | None = None
+    framing: str | None = None
 
     @property
     def summary(self) -> str:
@@ -59,11 +67,16 @@ class PromptBuildResult:
         return compact if len(compact) <= 500 else f"{compact[:497]}..."
 
     def metadata(self) -> dict[str, str]:
-        return {
+        metadata = {
             "prompt_template_id": self.template_id,
             "prompt_template_selection": self.selection_rule,
             "final_prompt_summary": self.summary,
         }
+        if self.view is not None:
+            metadata["view"] = self.view
+        if self.framing is not None:
+            metadata["framing"] = self.framing
+        return metadata
 
 
 def list_prompt_template_ids() -> tuple[str, ...]:
@@ -113,6 +126,18 @@ def _extra_instructions(overrides: dict | None) -> str:
     return f"Additional requirements: {'; '.join(extras)}." if extras else ""
 
 
+def _composition_instruction(view: str | None, framing: str | None) -> tuple[str | None, str | None, str]:
+    if view is None and framing is None:
+        return None, None, ""
+    normalized_view = (view or "").strip().lower()
+    normalized_framing = (framing or "").strip().lower()
+    instruction = _COMPOSITION_INSTRUCTIONS.get((normalized_view, normalized_framing))
+    if instruction is None:
+        supported = ", ".join(f"{item_view}+{item_framing}" for item_view, item_framing in _COMPOSITION_INSTRUCTIONS)
+        raise ValueError(f"仅支持成对构图参数：{supported}。")
+    return normalized_view, normalized_framing, instruction
+
+
 def build_managed_prompt(
     product_name: str,
     product_category: str,
@@ -122,8 +147,11 @@ def build_managed_prompt(
     *,
     template_id: str | None = None,
     generation_mode: str | None = None,
+    view: str | None = None,
+    framing: str | None = None,
 ) -> PromptBuildResult:
     selected_id, selection_rule = _select_template_id(template_id, generation_mode)
+    selected_view, selected_framing, composition = _composition_instruction(view, framing)
     values = {
         "product_name": product_name,
         "product_category": product_category,
@@ -139,7 +167,17 @@ def build_managed_prompt(
     extra = values["extra_instructions"]
     if extra and "${extra_instructions}" not in template_text:
         prompt = f"{prompt}\n{extra}"
-    return PromptBuildResult(template_id=selected_id, selection_rule=selection_rule, prompt=prompt)
+    if composition:
+        # Keep the composition at the beginning so the persisted prompt summary
+        # remains distinguishable even when a long template is truncated.
+        prompt = f"{composition}\n{prompt}"
+    return PromptBuildResult(
+        template_id=selected_id,
+        selection_rule=selection_rule,
+        prompt=prompt,
+        view=selected_view,
+        framing=selected_framing,
+    )
 
 
 def build_prompt(

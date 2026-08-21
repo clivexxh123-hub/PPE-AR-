@@ -128,6 +128,8 @@ async def main() -> None:
                         "generation_mode": "human_wearing",
                         "human_reference": {"local_path": str(human_path)},
                         "ppe_reference": {"local_path": str(ppe_path)},
+                        "view": "front",
+                        "framing": "half_body",
                     },
                 )
             )
@@ -141,6 +143,11 @@ async def main() -> None:
             assert validation["ppe_reference"]["has_alpha"] is True
             assert captured["human-wearing-success"]["generation_mode"] == "human_wearing"
             assert captured["human-wearing-success"]["product_image_path"] == printed_design["path"]
+            assert "front-facing person" in captured["human-wearing-success"]["prompt"]
+            output_metadata = json.loads(Path(success["record"].metadata_path).read_text(encoding="utf-8"))
+            assert output_metadata["view"] == "front"
+            assert output_metadata["framing"] == "half_body"
+            assert output_metadata["prompt_template_id"] == "ppe_human_wearing"
 
             missing_human = await execute(
                 _task(
