@@ -45,10 +45,14 @@ class GenerateRequest(BaseModel):
 class LogoPlaceRequest(BaseModel):
     model_config = ConfigDict(title="Logo 处理请求")
 
-    base_image: ImageSource | None = Field(default=None, description="需要贴 Logo 的底图，当前占位实现暂未使用。")
+    base_image: ImageSource | None = Field(default=None, description="需要贴 Logo 的产品底图。")
     logo_image: ImageSource | None = Field(default=None, description="需要处理或贴到画面上的 Logo 图片。")
     position: str = Field(default="center", description="Logo 放置位置，例如 center、top-left、bottom-right。")
     scale: float = Field(default=0.25, description="Logo 相对底图的缩放比例。")
+    position_x_ratio: float = Field(default=0.5, ge=0, le=1, description="Logo 左上角在可用横向区域中的比例。")
+    position_y_ratio: float = Field(default=0.5, ge=0, le=1, description="Logo 左上角在可用纵向区域中的比例。")
+    logo_width_ratio: float | None = Field(default=None, gt=0, le=1, description="Logo 宽度占底图宽度的比例。")
+    opacity: float = Field(default=1.0, ge=0, le=1, description="Logo 不透明度。")
     output_format: str = Field(default="png", description="输出图片格式，当前默认 png。")
     sync: bool = Field(default=False, description="是否同步执行。联调时可设为 true，正式环境建议异步。")
 

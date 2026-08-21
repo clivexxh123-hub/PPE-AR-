@@ -1,6 +1,6 @@
-from typing import Any, Literal
+﻿from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from app.schemas.tasks import TaskStatus
 
@@ -24,10 +24,28 @@ class TaskInputAsset(BaseModel):
 class TaskResult(BaseModel):
     model_config = ConfigDict(title="业务任务结果资产")
 
-    assetKey: str = Field(description="结果资产 key，格式为 results/{tenantId}/{jobId}/attempt-{attempt}/result.{ext}。")
+    assetKey: str = Field(description="结果 OSS 对象 key，正式联调时由业务端 output.assetKey 提供。")
     width: int = Field(description="结果图片宽度。")
     height: int = Field(description="结果图片高度。")
     hash: str = Field(description="结果图片完整 64 位小写 SHA-256。")
+
+
+class TaskOutputSpec(BaseModel):
+    model_config = ConfigDict(title="业务输出上传配置")
+
+    assetKey: str = Field(description="业务端生成的 OSS 对象 key。")
+    uploadUrl: HttpUrl = Field(description="业务端提供的 OSS PUT 预签名 URL。")
+    method: Literal["PUT"] = Field(default="PUT", description="上传方法，当前只支持 PUT。")
+    requiredHeaders: dict[str, str] = Field(default_factory=dict, description="上传时必须原样携带的请求头。")
+    expiresAt: str | None = Field(default=None, description="预签名 URL 过期时间，ISO 字符串。")
+
+    @field_validator("assetKey")
+    @classmethod
+    def required_asset_key_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("assetKey 不能为空。")
+        return value
 
 
 class WorkerCallbackEvent(BaseModel):
@@ -55,9 +73,10 @@ class GenerationTaskInput(BaseModel):
     attempt: int = Field(default=0, ge=0, description="当前尝试次数。")
     modelProfileId: str = Field(description="模型配置 ID。")
     workflowVersion: str = Field(description="工作流版本。")
-    inputAssets: list[TaskInputAsset] = Field(default_factory=list, description="输入资产列表，当前阶段只做审计记录，不解析资产内容。")
+    inputAssets: list[TaskInputAsset] = Field(default_factory=list, description="输入资产列表，当前用于审计和 metadata 记录。")
     parameters: dict[str, Any] = Field(default_factory=dict, description="生成参数，包含产品信息以及 product_image.url / logo_image.url。")
-    callback: str | None = Field(default=None, description="HTTP(S) 回调地址；缺失或不可达不阻塞生成结果。")
+    callback: str | None = Field(default=None, description="HTTP(S) 回调地址；缺失或不可达不阻塞本地结果记录。")
+    output: TaskOutputSpec | None = Field(default=None, description="业务端提供的结果上传配置；正式联调必须提供。")
 
     @field_validator("jobId", "tenantId", "traceId", "modelProfileId", "workflowVersion")
     @classmethod

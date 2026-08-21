@@ -3,10 +3,12 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from urllib.parse import urljoin
 from PIL import Image, UnidentifiedImageError
 
 from app.core.config import ensure_storage_dirs, settings
 from app.schemas.tasks import GenerateRequest, ImageSource
+from app.services.url_security import UnsafeUrlError, validate_public_http_url
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP", "BMP"}
@@ -54,8 +56,27 @@ async def _resolve_for_validation(source: ImageSource, role: str) -> tuple[Path,
 
 async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | None, str | None]:
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-            response = await client.get(url)
+        current_url = url
+        async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
+            for _ in range(6):
+                validate_public_http_url(current_url, purpose=f"{role} image URL")
+                response = await client.get(current_url)
+                if not response.is_redirect:
+                    break
+                location = response.headers.get("location")
+                if not location:
+                    break
+                current_url = urljoin(current_url, location)
+            else:
+                raise ImageAssetValidationError(
+                    f"{role} 图片 URL 重定向次数过多。",
+                    _failed_result(role=role, source_type="url", original_url=url, error="too many redirects"),
+                )
+    except UnsafeUrlError as exc:
+        raise ImageAssetValidationError(
+            f"{role} 图片 URL 不安全：{exc}",
+            _failed_result(role=role, source_type="url", original_url=url, error=str(exc)),
+        ) from exc
     except httpx.HTTPError as exc:
         raise ImageAssetValidationError(
             f"{role} 图片下载失败：{exc}",
@@ -106,7 +127,7 @@ async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | Non
             ),
         )
 
-    suffix = Path(httpx.URL(url).path).suffix.lower() or ".img"
+    suffix = Path(httpx.URL(str(current_url)).path).suffix.lower() or ".img"
     target = settings.input_dir / f"{uuid.uuid4().hex}{suffix}"
     target.write_bytes(content)
     return target, "url", url, content_type
