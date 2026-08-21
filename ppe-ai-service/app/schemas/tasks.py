@@ -17,6 +17,7 @@ class ImageSource(BaseModel):
     file_id: str | None = Field(default=None, description="通过 /files 上传后得到的文件 ID。")
     url: HttpUrl | None = Field(default=None, description="远程图片 URL，服务会先下载到本地再处理。")
     local_path: str | None = Field(default=None, description="本地开发调试用图片路径，生产环境不建议直接使用。")
+    retryable_auth_failure: bool = Field(default=False, exclude=True, description="正式预签名 GET 的 401/403 可重新签发后重试。")
 
 
 class GenerateRequest(BaseModel):

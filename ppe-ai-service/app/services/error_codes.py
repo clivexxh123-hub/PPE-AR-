@@ -1,5 +1,6 @@
 ﻿from pydantic import ValidationError
 
+from app.services.image_asset_service import RetryableImageAssetError
 from app.services.storage_service import StorageInputError, StorageRetryableUploadError, StorageUploadError
 
 
@@ -14,6 +15,8 @@ COMMON_INTERNAL = "COMMON_500_INTERNAL"
 def map_exception_to_error(exc: Exception) -> tuple[str, str, bool]:
     message = str(exc) or exc.__class__.__name__
     lowered = message.lower()
+    if isinstance(exc, RetryableImageAssetError):
+        return AI_NETWORK_RETRYABLE, message, True
     if isinstance(exc, StorageInputError):
         return AI_INPUT_INVALID, message, False
     if isinstance(exc, StorageRetryableUploadError):

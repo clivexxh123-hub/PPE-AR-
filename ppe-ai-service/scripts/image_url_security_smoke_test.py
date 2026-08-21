@@ -3,15 +3,30 @@ from __future__ import annotations
 import asyncio
 import io
 import ipaddress
+import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
 from PIL import Image
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from app.core.config import settings
-from app.services.image_asset_service import ImageAssetValidationError, _download_image_url
+from app.schemas.tasks import ImageSource
+from app.services.error_codes import map_exception_to_error
+from app.services.image_asset_service import (
+    MAX_IMAGE_BYTES,
+    ImageAssetValidationError,
+    RetryableImageAssetError,
+    _download_image_url,
+    validate_generate_request_images,
+    validate_image_source,
+)
 
 
 def _png_bytes() -> bytes:
@@ -22,8 +37,9 @@ def _png_bytes() -> bytes:
 
 
 class FakeAsyncClient:
-    def __init__(self, *, redirect: bool = False, **_: object) -> None:
+    def __init__(self, *, redirect: bool = False, status_code: int = 200, **_: object) -> None:
         self.redirect = redirect
+        self.status_code = status_code
         self.requests: list[str] = []
 
     async def __aenter__(self) -> "FakeAsyncClient":
@@ -36,7 +52,7 @@ class FakeAsyncClient:
         self.requests.append(url)
         if self.redirect:
             return httpx.Response(302, headers={"location": "http://127.0.0.1/private.png"})
-        return httpx.Response(200, headers={"content-type": "image/png"}, content=_png_bytes())
+        return httpx.Response(self.status_code, headers={"content-type": "image/png"}, content=_png_bytes())
 
 
 def _resolved_addresses(hostname: str, _: int | None) -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
@@ -59,6 +75,30 @@ async def _run() -> None:
             settings.output_dir = settings.storage_dir / "outputs"
             settings.task_dir = settings.storage_dir / "tasks"
             settings.input_dir.mkdir(parents=True, exist_ok=True)
+
+            for image_format, suffix in (("PNG", ".png"), ("JPEG", ".jpg"), ("WEBP", ".webp")):
+                image_path = root / f"accepted{suffix}"
+                Image.new("RGB", (2, 2), "yellow").save(image_path, format=image_format)
+                validation = await validate_image_source(ImageSource(local_path=str(image_path)), "product_reference")
+                assert validation["format"] == image_format.lower()
+
+            unsupported_path = root / "unsupported.bmp"
+            Image.new("RGB", (2, 2), "yellow").save(unsupported_path, format="BMP")
+            try:
+                await validate_image_source(ImageSource(local_path=str(unsupported_path)), "product_reference")
+            except ImageAssetValidationError:
+                pass
+            else:
+                raise AssertionError("BMP was accepted")
+
+            oversized_path = root / "oversized.png"
+            oversized_path.write_bytes(b"x" * (MAX_IMAGE_BYTES + 1))
+            try:
+                await validate_image_source(ImageSource(local_path=str(oversized_path)), "product_reference")
+            except ImageAssetValidationError:
+                pass
+            else:
+                raise AssertionError("image larger than 20 MiB was accepted")
 
             with patch("app.services.url_security._resolved_addresses", side_effect=_resolved_addresses):
                 with patch("app.services.image_asset_service.httpx.AsyncClient", FakeAsyncClient):
@@ -88,6 +128,72 @@ async def _run() -> None:
                         pass
                     else:
                         raise AssertionError("redirect to a private URL was accepted")
+
+                for status_code in (401, 403):
+                    with patch(
+                        "app.services.image_asset_service.httpx.AsyncClient",
+                        lambda **kwargs: FakeAsyncClient(status_code=status_code, **kwargs),
+                    ):
+                        try:
+                            await _download_image_url(
+                                "https://public.example/signed.png",
+                                "product_reference",
+                                retryable_auth_failure=True,
+                            )
+                        except RetryableImageAssetError as exc:
+                            assert map_exception_to_error(exc)[2] is True
+                            assert "signed.png" not in str(exc)
+                        else:
+                            raise AssertionError(f"formal GET HTTP {status_code} was not retryable")
+
+                with patch(
+                    "app.services.image_asset_service.httpx.AsyncClient",
+                    lambda **kwargs: FakeAsyncClient(status_code=404, **kwargs),
+                ):
+                    try:
+                        await _download_image_url(
+                            "https://public.example/missing.png",
+                            "product_reference",
+                            retryable_auth_failure=True,
+                        )
+                    except ImageAssetValidationError as exc:
+                        assert map_exception_to_error(exc)[2] is False
+                    else:
+                        raise AssertionError("ordinary input failure was accepted")
+
+                with patch(
+                    "app.services.image_asset_service.httpx.AsyncClient",
+                    lambda **kwargs: FakeAsyncClient(status_code=403, **kwargs),
+                ):
+                    try:
+                        await _download_image_url("https://public.example/compat.png", "product_reference")
+                    except ImageAssetValidationError as exc:
+                        assert not isinstance(exc, RetryableImageAssetError)
+                        assert map_exception_to_error(exc)[2] is False
+                    else:
+                        raise AssertionError("compatibility GET HTTP 403 was accepted")
+
+                for image_field in ("product_image", "logo_image"):
+                    payload = SimpleNamespace(
+                        product_image=None,
+                        logo_image=None,
+                    )
+                    setattr(
+                        payload,
+                        image_field,
+                        ImageSource(url="https://public.example/formal-auth.png", retryable_auth_failure=True),
+                    )
+                    with patch(
+                        "app.services.image_asset_service.httpx.AsyncClient",
+                        lambda **kwargs: FakeAsyncClient(status_code=401, **kwargs),
+                    ):
+                        try:
+                            await validate_generate_request_images(payload)
+                        except RetryableImageAssetError as exc:
+                            assert map_exception_to_error(exc)[2] is True
+                            assert image_field in exc.validation_result
+                        else:
+                            raise AssertionError(f"{image_field} lost its retryable error type")
     finally:
         settings.storage_dir = original_storage_dir
         settings.input_dir = original_input_dir

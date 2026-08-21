@@ -10,14 +10,18 @@ from app.core.config import ensure_storage_dirs, settings
 from app.schemas.tasks import GenerateRequest, ImageSource
 from app.services.url_security import UnsafeUrlError, validate_public_http_url
 
-MAX_IMAGE_BYTES = 25 * 1024 * 1024
-ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP", "BMP"}
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
 
 
 class ImageAssetValidationError(ValueError):
     def __init__(self, message: str, validation_result: dict[str, Any] | None = None):
         super().__init__(message)
         self.validation_result = validation_result or {}
+
+
+class RetryableImageAssetError(ImageAssetValidationError):
+    """A signed input can be retried after the back end reissues its URL."""
 
 
 def validate_alpha_channel(path: Path, role: str) -> dict[str, Any]:
@@ -50,11 +54,15 @@ async def validate_generate_request_images(payload: GenerateRequest) -> dict[str
     if payload.product_image is not None:
         try:
             result["product_image"] = await validate_image_source(payload.product_image, "product_reference")
+        except RetryableImageAssetError as exc:
+            raise RetryableImageAssetError(str(exc), {"product_image": exc.validation_result}) from exc
         except ImageAssetValidationError as exc:
             raise ImageAssetValidationError(str(exc), {"product_image": exc.validation_result}) from exc
     if payload.logo_image is not None:
         try:
             result["logo_image"] = await validate_image_source(payload.logo_image, "logo")
+        except RetryableImageAssetError as exc:
+            raise RetryableImageAssetError(str(exc), {"logo_image": exc.validation_result}) from exc
         except ImageAssetValidationError as exc:
             raise ImageAssetValidationError(str(exc), {"logo_image": exc.validation_result}) from exc
     return result
@@ -72,30 +80,27 @@ async def _resolve_for_validation(source: ImageSource, role: str) -> tuple[Path,
     if source.local_path:
         return Path(source.local_path), "local_path", None, None
     if source.url:
-        return await _download_image_url(str(source.url), role)
+        return await _download_image_url(str(source.url), role, retryable_auth_failure=source.retryable_auth_failure)
     raise ImageAssetValidationError(
         f"{role} 图片来源为空。",
         _failed_result(role=role, source_type="unknown", error="image source is empty"),
     )
 
 
-async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | None, str | None]:
+async def _download_image_url(
+    url: str,
+    role: str,
+    *,
+    retryable_auth_failure: bool = False,
+) -> tuple[Path, str, str | None, str | None]:
     try:
-        current_url = url
         async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
-            for _ in range(6):
-                validate_public_http_url(current_url, purpose=f"{role} image URL")
-                response = await client.get(current_url)
-                if not response.is_redirect:
-                    break
-                location = response.headers.get("location")
-                if not location:
-                    break
-                current_url = urljoin(current_url, location)
-            else:
+            validate_public_http_url(url, purpose=f"{role} image URL")
+            response = await client.get(url)
+            if response.is_redirect:
                 raise ImageAssetValidationError(
-                    f"{role} 图片 URL 重定向次数过多。",
-                    _failed_result(role=role, source_type="url", original_url=url, error="too many redirects"),
+                    f"{role} 图片 URL 不允许重定向。",
+                    _failed_result(role=role, source_type="url", original_url=url, error="redirects are not allowed"),
                 )
     except UnsafeUrlError as exc:
         raise ImageAssetValidationError(
@@ -109,7 +114,9 @@ async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | Non
         ) from exc
 
     if response.status_code >= 400:
-        raise ImageAssetValidationError(
+        retryable_auth_status = retryable_auth_failure and response.status_code in {401, 403}
+        error_type = RetryableImageAssetError if retryable_auth_status else ImageAssetValidationError
+        raise error_type(
             f"{role} 图片 URL 返回 HTTP {response.status_code}。",
             _failed_result(
                 role=role,
@@ -152,7 +159,7 @@ async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | Non
             ),
         )
 
-    suffix = Path(httpx.URL(str(current_url)).path).suffix.lower() or ".img"
+    suffix = Path(httpx.URL(url).path).suffix.lower() or ".img"
     target = settings.input_dir / f"{uuid.uuid4().hex}{suffix}"
     target.write_bytes(content)
     return target, "url", url, content_type
