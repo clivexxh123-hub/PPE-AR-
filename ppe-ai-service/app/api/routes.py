@@ -23,10 +23,9 @@ from app.services.image_asset_service import (
 from app.services.input_adapter import resolve_image_source, save_upload
 from app.services.logo_service import normalize_logo, render_printed_design
 from app.services.prompt_templates import (
-    build_human_wearing_prompt,
-    build_prompt,
+    PromptBuildResult,
+    build_managed_prompt,
     build_scene_background_prompt,
-    build_scene_generation_prompt,
 )
 from app.services.scene_composite_service import render_scene_marketing_image
 from app.services.storage_service import StorageUploadResult, upload_result
@@ -428,6 +427,11 @@ def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateReque
         logo_image=_image_source_from_parameter(parameters.get("logo_image")),
         product_name=str(parameters.get("product_name", "")).strip(),
         product_category=str(parameters.get("product_category", "")).strip(),
+        template_id=(
+            str(parameters["template_id"]).strip()
+            if parameters.get("template_id") is not None
+            else None
+        ),
         scene=str(parameters.get("scene", "")).strip(),
         style=str(parameters.get("style", "")).strip(),
         size=str(parameters.get("size", "512x512")).strip(),
@@ -807,20 +811,16 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 printed_design=printed_design,
             ),
         )
-        prompt_builder = (
-            build_human_wearing_prompt
-            if generation_mode == "human_wearing"
-            else build_scene_generation_prompt
-            if generation_mode == "scene_generation"
-            else build_prompt
-        )
-        prompt = prompt_builder(
+        prompt_result = build_managed_prompt(
             product_name=generate_payload.product_name,
             product_category=generate_payload.product_category,
             scene=generate_payload.scene,
             style=generate_payload.style,
             overrides=generate_payload.prompt_overrides,
+            template_id=generate_payload.template_id,
+            generation_mode=generation_mode,
         )
+        prompt = prompt_result.prompt
         generation_kwargs = (
             {"generation_mode": generation_mode}
             if generation_mode in {"human_wearing", "scene_generation"}
@@ -831,6 +831,11 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 scene=generate_payload.scene,
                 style=generate_payload.style,
                 overrides=generate_payload.prompt_overrides,
+            )
+            prompt_result = PromptBuildResult(
+                template_id=prompt_result.template_id,
+                selection_rule=prompt_result.selection_rule,
+                prompt=background_prompt,
             )
             background_path, background_metadata_path, background_engine = await generate_ai_image(
                 f"{task.jobId}-scene-background",
@@ -886,6 +891,9 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             input_asset_validation=input_asset_validation,
             printed_design=printed_design,
         )
+        prompt_metadata = prompt_result.metadata()
+        extra.update(prompt_metadata)
+        extra["business_protocol"].update(prompt_metadata)
         _append_output_metadata(metadata_path, extra)
         save_task(record, extra=extra)
     except Exception as exc:
@@ -927,21 +935,29 @@ async def _run_generate_task(task_id: str, payload: GenerateRequest) -> None:
         save_task(record)
         await resolve_image_source(payload.product_image)
         await resolve_image_source(payload.logo_image)
-        prompt = build_prompt(
+        prompt_result = build_managed_prompt(
             product_name=payload.product_name,
             product_category=payload.product_category,
             scene=payload.scene,
             style=payload.style,
             overrides=payload.prompt_overrides,
+            template_id=payload.template_id,
         )
-        image_path, metadata_path, engine = await generate_ai_image(task_id, prompt, payload.size, payload.output_format)
+        image_path, metadata_path, engine = await generate_ai_image(
+            task_id,
+            prompt_result.prompt,
+            payload.size,
+            payload.output_format,
+        )
         record.status = TaskStatus.succeeded
         record.message = f"图片已生成，当前使用 {engine} 引擎。"
         record.output_path = str(image_path)
         record.metadata_path = str(metadata_path)
         record.result_url = f"/outputs/{task_id}/{image_path.name}"
         record.metadata_url = f"/outputs/{task_id}/{metadata_path.name}"
-        save_task(record)
+        prompt_metadata = prompt_result.metadata()
+        _append_output_metadata(metadata_path, prompt_metadata)
+        save_task(record, extra=prompt_metadata)
     except Exception as exc:
         record.status = TaskStatus.failed
         record.message = "AI 图片生成失败。"

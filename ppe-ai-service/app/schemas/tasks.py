@@ -26,6 +26,10 @@ class GenerateRequest(BaseModel):
     logo_image: ImageSource | None = Field(default=None, description="Logo 图片，可先为空，后续用于贴图或品牌元素融合。")
     product_name: str = Field(description="产品名称，例如安全帽、护目镜、防护服。")
     product_category: str = Field(description="产品分类，用于辅助生成 Prompt。")
+    template_id: str | None = Field(
+        default=None,
+        description="内置 PPE Prompt 模板 ID：ppe_product_display、ppe_scene_marketing、ppe_human_wearing；缺失时按生成模式选择。",
+    )
     scene: str = Field(description="营销图场景描述。")
     style: str = Field(description="画面风格描述。")
     size: str = Field(description="输出尺寸，格式为 宽x高，例如 1024x1024。")
