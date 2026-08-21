@@ -13,10 +13,16 @@ from app.services.asset_result import build_business_task_result
 from app.services.callback_service import send_worker_callback
 from app.services.error_codes import map_exception_to_error
 from app.services.generation_engine import generate_ai_image
-from app.services.image_asset_service import validate_generate_request_images
+from app.services.human_wearing_service import render_human_wearing_design
+from app.services.image_asset_service import (
+    ImageAssetValidationError,
+    validate_alpha_channel,
+    validate_generate_request_images,
+    validate_image_source,
+)
 from app.services.input_adapter import resolve_image_source, save_upload
 from app.services.logo_service import normalize_logo, render_printed_design
-from app.services.prompt_templates import build_prompt
+from app.services.prompt_templates import build_human_wearing_prompt, build_prompt
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
 from app.services.url_security import redact_headers, redact_sensitive_data, redact_url
@@ -55,18 +61,18 @@ async def generate_image(payload: GenerateRequest, background_tasks: BackgroundT
 @router.post(
     "/ai/tasks",
     response_model=BusinessTaskResponse,
-    summary="提交业务 AI 生成任务",
-    description="接收业务端 GenerationTaskInput 风格任务。当前阶段 inputAssets 只记录不解析，callback 支持 HTTP(S) 发送和 internal:// 记录。",
+    summary="提交业务 AI 任务",
+    description="接收 image_generation、logo_remove_bg 或 print_render 任务，并复用统一状态、结果、上传与回调结构。",
     tags=["AI 图片生成"],
 )
 async def create_business_ai_task(payload: GenerationTaskInput, background_tasks: BackgroundTasks) -> BusinessTaskResponse:
     request_payload = redact_sensitive_data(payload.model_dump(mode="json"))
-    record = create_task("ai.business_generate", request_payload, task_id=payload.jobId)
+    record = create_task(f"ai.business_{payload.type}", request_payload, task_id=payload.jobId)
     save_task(record, extra=_business_extra(payload))
     if bool(payload.parameters.get("sync", False)):
-        await _run_business_generate_task(payload)
+        await _run_business_task(payload)
     else:
-        background_tasks.add_task(_run_business_generate_task, payload)
+        background_tasks.add_task(_run_business_task, payload)
     return _business_response(load_task(payload.jobId) or record)
 
 
@@ -74,7 +80,7 @@ async def create_business_ai_task(payload: GenerationTaskInput, background_tasks
     "/logo/remove-bg",
     response_model=TaskResponse,
     summary="Logo 透明底处理",
-    description="将 Logo 规范化为透明 PNG 画布。当前为占位实现，后续会接入真实抠图模型。",
+    description="将常见简单背景的 Logo 处理为透明 PNG。复杂背景仍需要后续增强。",
     tags=["Logo 处理"],
 )
 async def remove_logo_background(payload: LogoPlaceRequest, background_tasks: BackgroundTasks) -> TaskResponse:
@@ -114,6 +120,20 @@ def get_task(task_id: str) -> TaskResponse:
     if record is None:
         raise HTTPException(status_code=404, detail="任务不存在。")
     return to_response(record)
+
+
+@router.get(
+    "/ai/tasks/{job_id}",
+    response_model=BusinessTaskResponse,
+    summary="查询业务 AI 任务",
+    description="根据 jobId 查询 /ai/tasks 提交的统一业务任务状态、结果和错误信息。",
+    tags=["AI 图片生成"],
+)
+def get_business_ai_task(job_id: str) -> BusinessTaskResponse:
+    record = load_task(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="任务不存在。")
+    return _business_response(record)
 
 
 @router.get(
@@ -179,17 +199,136 @@ def _asset_warnings(task: GenerationTaskInput) -> list[dict[str, str]]:
 
 
 def _validated_product_image_path(input_asset_validation: dict[str, Any] | None) -> Path | None:
+    return _validated_image_path(input_asset_validation, "product_image")
+
+
+def _validated_image_path(input_asset_validation: dict[str, Any] | None, key: str) -> Path | None:
     if not isinstance(input_asset_validation, dict):
         return None
-    product_image = input_asset_validation.get("product_image")
-    if not isinstance(product_image, dict):
+    image = input_asset_validation.get(key)
+    if not isinstance(image, dict):
         return None
-    if product_image.get("validation_status") != "passed":
+    if image.get("validation_status") != "passed":
         return None
-    local_path = product_image.get("local_path")
+    local_path = image.get("local_path")
     if not local_path:
         return None
     return Path(str(local_path))
+
+
+def _validated_logo_image_path(input_asset_validation: dict[str, Any] | None) -> Path | None:
+    return _validated_image_path(input_asset_validation, "logo_image")
+
+
+def _prepare_generation_input(
+    task: GenerationTaskInput,
+    input_asset_validation: dict[str, Any] | None,
+) -> tuple[Path | None, dict[str, Any]]:
+    product_image_path = _validated_product_image_path(input_asset_validation)
+    logo_image_path = _validated_logo_image_path(input_asset_validation)
+    if product_image_path is None or logo_image_path is None:
+        missing = []
+        if product_image_path is None:
+            missing.append("product_image")
+        if logo_image_path is None:
+            missing.append("logo_image")
+        return product_image_path, {
+            "printed_design_used": False,
+            "reason": f"missing_validated_{'_and_'.join(missing)}",
+        }
+
+    position_x_ratio = float(task.parameters.get("position_x_ratio", 0.5))
+    position_y_ratio = float(task.parameters.get("position_y_ratio", 0.5))
+    logo_width_ratio = float(task.parameters.get("logo_width_ratio", 0.25))
+    opacity = float(task.parameters.get("opacity", 1.0))
+    printed_design_path, printed_metadata_path = render_printed_design(
+        f"{task.jobId}-printed-design",
+        product_image_path,
+        logo_image_path,
+        position_x_ratio=position_x_ratio,
+        position_y_ratio=position_y_ratio,
+        logo_width_ratio=logo_width_ratio,
+        opacity=opacity,
+    )
+    return printed_design_path, {
+        "printed_design_used": True,
+        "path": str(printed_design_path),
+        "metadata_path": str(printed_metadata_path),
+        "product_image_path": str(product_image_path),
+        "logo_image_path": str(logo_image_path),
+        "position_x_ratio": position_x_ratio,
+        "position_y_ratio": position_y_ratio,
+        "logo_width_ratio": logo_width_ratio,
+        "opacity": opacity,
+    }
+
+
+async def _prepare_human_wearing_input(
+    task: GenerationTaskInput,
+    generate_payload: GenerateRequest,
+    input_asset_validation: dict[str, Any] | None,
+) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    validation = dict(input_asset_validation or {})
+    human_source = _image_source_from_parameter(task.parameters.get("human_reference"))
+    ppe_source = _image_source_from_parameter(
+        task.parameters.get("ppe_reference") or task.parameters.get("product_image")
+    )
+    if human_source is None:
+        raise ValueError("human_wearing 需要 parameters.human_reference。")
+    if ppe_source is None:
+        raise ValueError("human_wearing 需要 parameters.ppe_reference 或透明 product_image。")
+
+    try:
+        validation["human_reference"] = await validate_image_source(human_source, "human_reference")
+        validation["ppe_reference"] = await validate_image_source(ppe_source, "ppe_reference")
+        ppe_path = _validated_image_path(validation, "ppe_reference")
+        if ppe_path is None:
+            raise ValueError("ppe_reference 校验失败。")
+        validation["ppe_reference"].update(validate_alpha_channel(ppe_path, "ppe_reference"))
+    except ImageAssetValidationError as exc:
+        combined = dict(validation)
+        ppe_validation = combined.get("ppe_reference")
+        if isinstance(ppe_validation, dict):
+            ppe_validation.update(exc.validation_result)
+        else:
+            combined.update(exc.validation_result)
+        raise ImageAssetValidationError(str(exc), combined) from exc
+
+    human_path = _validated_image_path(validation, "human_reference")
+    ppe_path = _validated_image_path(validation, "ppe_reference")
+    if human_path is None or ppe_path is None:
+        raise ValueError("human_reference 或 ppe_reference 校验失败。")
+
+    position_x_ratio = float(task.parameters.get("position_x_ratio", 0.5))
+    position_y_ratio = float(task.parameters.get("position_y_ratio", 0.0))
+    ppe_width_ratio = float(
+        task.parameters.get("ppe_width_ratio", task.parameters.get("logo_width_ratio", 0.30))
+    )
+    opacity = float(task.parameters.get("opacity", 1.0))
+    image_path, metadata_path = render_human_wearing_design(
+        f"{task.jobId}-human-wearing",
+        human_path,
+        ppe_path,
+        size=generate_payload.size,
+        position_x_ratio=position_x_ratio,
+        position_y_ratio=position_y_ratio,
+        ppe_width_ratio=ppe_width_ratio,
+        opacity=opacity,
+    )
+    return image_path, {
+        "printed_design_used": True,
+        "human_wearing_used": True,
+        "generation_mode": "human_wearing",
+        "path": str(image_path),
+        "metadata_path": str(metadata_path),
+        "human_reference_path": str(human_path),
+        "ppe_reference_path": str(ppe_path),
+        "position_x_ratio": position_x_ratio,
+        "position_y_ratio": position_y_ratio,
+        "ppe_width_ratio": ppe_width_ratio,
+        "opacity": opacity,
+    }, validation
+
 
 def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateRequest:
     prompt_overrides = parameters.get("prompt_overrides")
@@ -209,6 +348,26 @@ def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateReque
     )
 
 
+def _parameters_to_logo_request(parameters: dict[str, Any]) -> LogoPlaceRequest:
+    base_value = parameters.get("base_image") or parameters.get("product_image")
+    return LogoPlaceRequest(
+        base_image=_image_source_from_parameter(base_value),
+        logo_image=_image_source_from_parameter(parameters.get("logo_image")),
+        position=str(parameters.get("position", "center")),
+        scale=float(parameters.get("scale", 0.25)),
+        position_x_ratio=float(parameters.get("position_x_ratio", 0.5)),
+        position_y_ratio=float(parameters.get("position_y_ratio", 0.5)),
+        logo_width_ratio=(
+            float(parameters["logo_width_ratio"])
+            if parameters.get("logo_width_ratio") is not None
+            else None
+        ),
+        opacity=float(parameters.get("opacity", 1.0)),
+        output_format=str(parameters.get("output_format", "png")),
+        sync=bool(parameters.get("sync", False)),
+    )
+
+
 def _business_extra(
     task: GenerationTaskInput,
     result: TaskResult | None = None,
@@ -220,9 +379,12 @@ def _business_extra(
     retryable: bool | None = None,
     callback_result: dict[str, Any] | None = None,
     input_asset_validation: dict[str, Any] | None = None,
+    printed_design: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     product_image_url = _image_url_from_parameter(task.parameters, "product_image")
     logo_image_url = _image_url_from_parameter(task.parameters, "logo_image")
+    generation_mode = str(task.parameters.get("generation_mode", "")).strip() or None
+    human_wearing_used = bool(printed_design and printed_design.get("human_wearing_used"))
     payload: dict[str, Any] = {
         "business_protocol": {
             "jobId": task.jobId,
@@ -231,10 +393,13 @@ def _business_extra(
             "attempt": task.attempt,
             "modelProfileId": task.modelProfileId,
             "workflowVersion": task.workflowVersion,
+            "operation": task.type,
             "inputAssets": [asset.model_dump(mode="json") for asset in task.inputAssets],
             "inputAssetsByRole": _assets_by_role(task),
             "raw_callback": redact_url(task.callback),
             "callback_source": "GenerationTaskInput.callback",
+            "generation_mode": generation_mode,
+            "human_wearing_used": human_wearing_used,
             "parameters": redact_sensitive_data(task.parameters),
             "image_urls": {
                 "product_image": product_image_url,
@@ -250,6 +415,8 @@ def _business_extra(
             if task.output
             else None,
             "input_asset_validation": input_asset_validation or {},
+            "printed_design_used": bool(printed_design and printed_design.get("printed_design_used")),
+            "printed_design": printed_design,
             "asset_warnings": _asset_warnings(task),
             "storage_backend": storage_result.storage_backend if storage_result else settings.storage_backend,
             "oss_uploaded": storage_result.uploaded if storage_result else False,
@@ -260,6 +427,11 @@ def _business_extra(
     }
     if input_asset_validation is not None:
         payload["input_asset_validation"] = input_asset_validation
+    payload["printed_design_used"] = bool(printed_design and printed_design.get("printed_design_used"))
+    payload["generation_mode"] = generation_mode
+    payload["human_wearing_used"] = human_wearing_used
+    if printed_design is not None:
+        payload["printed_design"] = printed_design
     if result is not None:
         payload["business_result"] = result.model_dump(mode="json")
         payload["business_protocol"]["assetKey"] = result.assetKey
@@ -341,13 +513,137 @@ async def _report_business_event(
     return await send_worker_callback(task.callback, event)
 
 
-async def _run_business_generate_task(task: GenerationTaskInput) -> None:
+async def _run_business_task(task: GenerationTaskInput) -> None:
+    if task.type == "image_generation":
+        await _run_business_generate_task(task)
+        return
+    await _run_business_logo_task(task)
+
+
+async def _run_business_logo_task(task: GenerationTaskInput) -> None:
     started_at = time.monotonic()
     input_asset_validation: dict[str, Any] | None = None
+    printed_design: dict[str, Any] | None = None
     record = load_task(task.jobId)
     if record is None:
         return
     try:
+        record.status = TaskStatus.running
+        record.message = f"正在处理业务 {task.type} 任务。"
+        callback_result = await _report_business_event(task, TaskStatus.running, started_at, progress=10)
+        save_task(record, extra=_business_extra(task, callback_result=callback_result))
+
+        logo_payload = _parameters_to_logo_request(task.parameters)
+        if logo_payload.logo_image is None:
+            raise ValueError("parameters.logo_image 是必填图片输入。")
+        input_asset_validation = {
+            "logo_image": await validate_image_source(logo_payload.logo_image, "logo"),
+        }
+        logo_path = _validated_logo_image_path(input_asset_validation)
+        if logo_path is None:
+            raise ValueError("logo_image 校验失败。")
+
+        if task.type == "logo_remove_bg":
+            image_path, metadata_path = normalize_logo(task.jobId, logo_path, logo_payload.output_format)
+            completion_message = "业务 Logo 背景抠除已完成。"
+        elif task.type == "print_render":
+            if logo_payload.base_image is None:
+                raise ValueError("print_render 需要 parameters.base_image 或 parameters.product_image。")
+            input_asset_validation["base_image"] = await validate_image_source(logo_payload.base_image, "base_image")
+            base_path = _validated_image_path(input_asset_validation, "base_image")
+            if base_path is None:
+                raise ValueError("base_image 校验失败。")
+            image_path, metadata_path = render_printed_design(
+                task.jobId,
+                base_path,
+                logo_path,
+                position_x_ratio=logo_payload.position_x_ratio,
+                position_y_ratio=logo_payload.position_y_ratio,
+                logo_width_ratio=logo_payload.logo_width_ratio or logo_payload.scale,
+                opacity=logo_payload.opacity,
+            )
+            printed_design = {
+                "printed_design_used": True,
+                "path": str(image_path),
+                "metadata_path": str(metadata_path),
+                "product_image_path": str(base_path),
+                "logo_image_path": str(logo_path),
+                "position_x_ratio": logo_payload.position_x_ratio,
+                "position_y_ratio": logo_payload.position_y_ratio,
+                "logo_width_ratio": logo_payload.logo_width_ratio or logo_payload.scale,
+                "opacity": logo_payload.opacity,
+            }
+            completion_message = "业务印刷设计图已生成。"
+        else:
+            raise ValueError(f"不支持的业务任务类型：{task.type}")
+
+        result = build_business_task_result(
+            task.tenantId,
+            task.jobId,
+            task.attempt,
+            image_path,
+            asset_key=task.output.assetKey if task.output else None,
+        )
+        result_url = f"/outputs/{task.jobId}/{image_path.name}"
+        storage_result = await upload_result(image_path, result.assetKey, local_url=result_url, output=task.output)
+        record.status = TaskStatus.succeeded
+        record.message = completion_message
+        record.output_path = str(image_path)
+        record.metadata_path = str(metadata_path)
+        record.result_url = result_url
+        record.metadata_url = f"/outputs/{task.jobId}/{metadata_path.name}"
+        callback_result = await _report_business_event(task, TaskStatus.succeeded, started_at, progress=100, result=result)
+        extra = _business_extra(
+            task,
+            result=result,
+            storage_result=storage_result,
+            callback_result=callback_result,
+            input_asset_validation=input_asset_validation,
+            printed_design=printed_design,
+        )
+        _append_output_metadata(metadata_path, extra)
+        save_task(record, extra=extra)
+    except Exception as exc:
+        if input_asset_validation is None:
+            input_asset_validation = getattr(exc, "validation_result", None)
+        error_code, error_message, retryable = map_exception_to_error(exc)
+        record.status = TaskStatus.failed
+        record.message = f"业务 {task.type} 任务失败。"
+        record.error = error_message
+        callback_result = await _report_business_event(
+            task,
+            TaskStatus.failed,
+            started_at,
+            error_code=error_code,
+            error_message=error_message,
+            retryable=retryable,
+        )
+        save_task(
+            record,
+            extra=_business_extra(
+                task,
+                error_code=error_code,
+                error_message=error_message,
+                retryable=retryable,
+                callback_result=callback_result,
+                input_asset_validation=input_asset_validation,
+                printed_design=printed_design,
+            ),
+        )
+
+
+async def _run_business_generate_task(task: GenerationTaskInput) -> None:
+    started_at = time.monotonic()
+    input_asset_validation: dict[str, Any] | None = None
+    printed_design: dict[str, Any] = {
+        "printed_design_used": False,
+        "reason": "not_processed",
+    }
+    record = load_task(task.jobId)
+    if record is None:
+        return
+    try:
+        generation_mode = str(task.parameters.get("generation_mode", "")).strip().lower()
         record.status = TaskStatus.running
         record.message = f"正在使用 {settings.ai_engine} 引擎处理业务 AI 任务。"
         callback_result = await _report_business_event(task, TaskStatus.running, started_at, progress=10)
@@ -356,19 +652,37 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         generate_payload = _parameters_to_generate_request(task.parameters)
         input_asset_validation = await validate_generate_request_images(generate_payload)
         save_task(record, extra=_business_extra(task, callback_result=callback_result, input_asset_validation=input_asset_validation))
-        prompt = build_prompt(
+        if generation_mode == "human_wearing":
+            generation_input_path, printed_design, input_asset_validation = await _prepare_human_wearing_input(
+                task, generate_payload, input_asset_validation
+            )
+        else:
+            generation_input_path, printed_design = _prepare_generation_input(task, input_asset_validation)
+        save_task(
+            record,
+            extra=_business_extra(
+                task,
+                callback_result=callback_result,
+                input_asset_validation=input_asset_validation,
+                printed_design=printed_design,
+            ),
+        )
+        prompt_builder = build_human_wearing_prompt if generation_mode == "human_wearing" else build_prompt
+        prompt = prompt_builder(
             product_name=generate_payload.product_name,
             product_category=generate_payload.product_category,
             scene=generate_payload.scene,
             style=generate_payload.style,
             overrides=generate_payload.prompt_overrides,
         )
+        generation_kwargs = {"generation_mode": "human_wearing"} if generation_mode == "human_wearing" else {}
         image_path, metadata_path, engine = await generate_ai_image(
             task.jobId,
             prompt,
             generate_payload.size,
             generate_payload.output_format,
-            product_image_path=_validated_product_image_path(input_asset_validation),
+            product_image_path=generation_input_path,
+            **generation_kwargs,
         )
         result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path, asset_key=task.output.assetKey if task.output else None)
         result_url = f"/outputs/{task.jobId}/{image_path.name}"
@@ -386,6 +700,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             storage_result=storage_result,
             callback_result=callback_result,
             input_asset_validation=input_asset_validation,
+            printed_design=printed_design,
         )
         _append_output_metadata(metadata_path, extra)
         save_task(record, extra=extra)
@@ -413,6 +728,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 retryable=retryable,
                 callback_result=callback_result,
                 input_asset_validation=input_asset_validation,
+                printed_design=printed_design,
             ),
         )
 
@@ -455,7 +771,7 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
         return
     try:
         record.status = TaskStatus.running
-        record.message = "正在处理 Logo 占位流程。"
+        record.message = "正在处理 Logo 图片。"
         save_task(record)
         logo_path = await resolve_image_source(payload.logo_image)
         if operation == "place":
@@ -475,7 +791,7 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
         else:
             image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
         record.status = TaskStatus.succeeded
-        record.message = "Logo 占位处理已完成。后续会接入真实抠图和贴图逻辑。"
+        record.message = "Logo 图片处理已完成。"
         record.output_path = str(image_path)
         record.metadata_path = str(metadata_path)
         record.result_url = f"/outputs/{task_id}/{image_path.name}"
@@ -486,6 +802,3 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
         record.message = "Logo 处理失败。"
         record.error = str(exc)
         save_task(record)
-
-
-
