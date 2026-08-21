@@ -73,6 +73,7 @@ def main() -> int:
                 "scripts/prompt_management_smoke_test.py",
                 "scripts/logo_template_smoke_test.py",
                 "scripts/human_wearing_categories_smoke_test.py",
+                "scripts/logo_archive_smoke_test.py",
             ],
         ),
         Check("/ai/generate mock 回归", [PYTHON, "scripts/api_smoke_test.py"], engine="mock"),
@@ -91,6 +92,7 @@ def main() -> int:
         Check("Prompt 管理 MVP", [PYTHON, "scripts/prompt_management_smoke_test.py"], engine="mock"),
         Check("Logo 模板保存读取 MVP", [PYTHON, "scripts/logo_template_smoke_test.py"], engine="mock"),
         Check("human_wearing 多 PPE 类别兼容", [PYTHON, "scripts/human_wearing_categories_smoke_test.py"], engine="mock"),
+        Check("Logo 素材归档 MVP", [PYTHON, "scripts/logo_archive_smoke_test.py"], engine="mock"),
         Check("Git diff 检查", ["git", "diff", "--check"]),
         Check("scene_generation regression", [PYTHON, "scripts/scene_generation_smoke_test.py"], engine="mock"),
     ]

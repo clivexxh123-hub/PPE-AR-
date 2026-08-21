@@ -92,10 +92,12 @@ async def _run(root: Path) -> None:
         return image_path, metadata_path, "smoke"
 
     original_generate = routes.generate_ai_image
+    original_storage_dir = settings.storage_dir
     original_output_dir = settings.output_dir
     original_input_dir = settings.input_dir
     original_task_dir = settings.task_dir
     original_storage_backend = settings.storage_backend
+    settings.storage_dir = root / "storage"
     settings.output_dir = root / "outputs"
     settings.input_dir = root / "validated_inputs"
     settings.task_dir = root / "tasks"
@@ -126,6 +128,7 @@ async def _run(root: Path) -> None:
         assert captured_inputs[without_logo.jobId] == base_path
     finally:
         routes.generate_ai_image = original_generate
+        settings.storage_dir = original_storage_dir
         settings.output_dir = original_output_dir
         settings.input_dir = original_input_dir
         settings.task_dir = original_task_dir

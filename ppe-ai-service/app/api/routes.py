@@ -22,6 +22,7 @@ from app.services.image_asset_service import (
 )
 from app.services.input_adapter import resolve_image_source, save_upload
 from app.services.logo_service import normalize_logo, render_printed_design
+from app.services.logo_archive_service import archive_logo_asset
 from app.services.logo_template_store import LogoPlacementResolution, resolve_logo_placement
 from app.services.prompt_templates import (
     PromptBuildResult,
@@ -321,6 +322,7 @@ def _prepare_generation_input(
         else None
     )
     placement_resolution = resolve_logo_placement(template_id, _manual_placement_parameters(task.parameters))
+    logo_archive_metadata = {"logo_used_asset": archive_logo_asset(logo_image_path, "used_in_print_render").metadata()}
     printed_design_path, printed_metadata_path = render_printed_design(
         f"{task.jobId}-printed-design",
         product_image_path,
@@ -329,7 +331,7 @@ def _prepare_generation_input(
     )
     placement = _placement_summary(printed_metadata_path)
     template_metadata = _logo_template_metadata(placement_resolution, printed_metadata_path)
-    _append_output_metadata(printed_metadata_path, template_metadata)
+    _append_output_metadata(printed_metadata_path, {**template_metadata, **logo_archive_metadata})
     return printed_design_path, {
         "printed_design_used": True,
         "path": str(printed_design_path),
@@ -338,6 +340,7 @@ def _prepare_generation_input(
         "logo_image_path": str(logo_image_path),
         **placement,
         **template_metadata,
+        **logo_archive_metadata,
     }
 
 
@@ -681,6 +684,7 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
     input_asset_validation: dict[str, Any] | None = None
     printed_design: dict[str, Any] | None = None
     template_metadata: dict[str, Any] = {}
+    archive_metadata: dict[str, Any] = {}
     record = load_task(task.jobId)
     if record is None:
         return
@@ -699,9 +703,12 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
         logo_path = _validated_logo_image_path(input_asset_validation)
         if logo_path is None:
             raise ValueError("logo_image 校验失败。")
+        archive_metadata["logo_original_asset"] = archive_logo_asset(logo_path, "original").metadata()
 
         if task.type == "logo_remove_bg":
             image_path, metadata_path = normalize_logo(task.jobId, logo_path, logo_payload.output_format)
+            archive_metadata["logo_transparent_asset"] = archive_logo_asset(image_path, "transparent").metadata()
+            _append_output_metadata(metadata_path, archive_metadata)
             completion_message = "业务 Logo 背景抠除已完成。"
         elif task.type == "print_render":
             if logo_payload.base_image is None:
@@ -720,8 +727,9 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
                 logo_path,
                 **placement_resolution.render_kwargs(),
             )
+            archive_metadata["logo_used_asset"] = archive_logo_asset(logo_path, "used_in_print_render").metadata()
             template_metadata = _logo_template_metadata(placement_resolution, metadata_path)
-            _append_output_metadata(metadata_path, template_metadata)
+            _append_output_metadata(metadata_path, {**template_metadata, **archive_metadata})
             printed_design = {
                 "printed_design_used": True,
                 "path": str(image_path),
@@ -730,6 +738,7 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
                 "logo_image_path": str(logo_path),
                 **_placement_summary(metadata_path),
                 **template_metadata,
+                **archive_metadata,
             }
             completion_message = "业务印刷设计图已生成。"
         else:
@@ -762,6 +771,9 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
         if template_metadata:
             extra.update(template_metadata)
             extra["business_protocol"].update(template_metadata)
+        if archive_metadata:
+            extra.update(archive_metadata)
+            extra["business_protocol"].update(archive_metadata)
         _append_output_metadata(metadata_path, extra)
         save_task(record, extra=extra)
     except Exception as exc:
@@ -996,15 +1008,20 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
     if record is None:
         return
     template_metadata: dict[str, Any] = {}
+    archive_metadata: dict[str, Any] = {}
     try:
         record.status = TaskStatus.running
         record.message = "正在处理 Logo 图片。"
         save_task(record)
         logo_path = await resolve_image_source(payload.logo_image)
+        if logo_path is not None:
+            archive_metadata["logo_original_asset"] = archive_logo_asset(logo_path, "original").metadata()
         if operation == "place":
             base_path = await resolve_image_source(payload.base_image)
             if base_path is None:
                 image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
+                archive_metadata["logo_transparent_asset"] = archive_logo_asset(image_path, "transparent").metadata()
+                _append_output_metadata(metadata_path, archive_metadata)
             else:
                 placement_resolution = resolve_logo_placement(
                     payload.template_id,
@@ -1017,16 +1034,19 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
                     **placement_resolution.render_kwargs(),
                 )
                 template_metadata = _logo_template_metadata(placement_resolution, metadata_path)
-                _append_output_metadata(metadata_path, template_metadata)
+                archive_metadata["logo_used_asset"] = archive_logo_asset(logo_path, "used_in_print_render").metadata()
+                _append_output_metadata(metadata_path, {**template_metadata, **archive_metadata})
         else:
             image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
+            archive_metadata["logo_transparent_asset"] = archive_logo_asset(image_path, "transparent").metadata()
+            _append_output_metadata(metadata_path, archive_metadata)
         record.status = TaskStatus.succeeded
         record.message = "Logo 图片处理已完成。"
         record.output_path = str(image_path)
         record.metadata_path = str(metadata_path)
         record.result_url = f"/outputs/{task_id}/{image_path.name}"
         record.metadata_url = f"/outputs/{task_id}/{metadata_path.name}"
-        save_task(record, extra=template_metadata)
+        save_task(record, extra={**template_metadata, **archive_metadata})
     except Exception as exc:
         record.status = TaskStatus.failed
         record.message = "Logo 处理失败。"
