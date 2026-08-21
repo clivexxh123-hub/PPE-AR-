@@ -267,9 +267,39 @@ def _placement_summary(metadata_path: Path) -> dict[str, Any]:
         return {}
     return {
         key: metadata[key]
-        for key in ("placement_mode", "final_x_ratio", "final_y_ratio", "final_width_ratio")
+        for key in (
+            "placement_mode",
+            "placement_profile",
+            "printable_region_bounds",
+            "final_x_ratio",
+            "final_y_ratio",
+            "final_width_ratio",
+        )
         if key in metadata
     }
+
+
+def _helmet_view_placement_defaults(parameters: dict[str, Any]) -> dict[str, str]:
+    """Map existing optional view hints to local helmet print-center profiles.
+
+    View is intentionally read from loose local parameters rather than added to
+    the frozen task contract.  A template or explicit manual placement is
+    merged above this default by ``resolve_logo_placement``.
+    """
+    aliases = {
+        "front": "front",
+        "正面": "front",
+        "back": "back",
+        "背面": "back",
+    }
+    for key in ("product_view", "view", "view_type", "viewType"):
+        value = parameters.get(key)
+        if value is None:
+            continue
+        normalized = str(value).strip().lower()
+        if normalized in aliases:
+            return {"position": aliases[normalized]}
+    return {}
 
 
 def _manual_placement_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
@@ -284,6 +314,8 @@ def _logo_template_metadata(resolution: LogoPlacementResolution, metadata_path: 
         metadata = {}
     final_keys = (
         "placement_mode",
+        "placement_profile",
+        "printable_region_bounds",
         "final_x_ratio",
         "final_y_ratio",
         "final_width_ratio",
@@ -321,7 +353,11 @@ def _prepare_generation_input(
         if task.parameters.get("logo_template_id") is not None
         else None
     )
-    placement_resolution = resolve_logo_placement(template_id, _manual_placement_parameters(task.parameters))
+    placement_resolution = resolve_logo_placement(
+        template_id,
+        _manual_placement_parameters(task.parameters),
+        _helmet_view_placement_defaults(task.parameters),
+    )
     logo_archive_metadata = {"logo_used_asset": archive_logo_asset(logo_image_path, "used_in_print_render").metadata()}
     printed_design_path, printed_metadata_path = render_printed_design(
         f"{task.jobId}-printed-design",
@@ -720,6 +756,7 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
             placement_resolution = resolve_logo_placement(
                 logo_payload.template_id,
                 _manual_placement_parameters(logo_payload.model_dump()),
+                _helmet_view_placement_defaults(task.parameters),
             )
             image_path, metadata_path = render_printed_design(
                 task.jobId,

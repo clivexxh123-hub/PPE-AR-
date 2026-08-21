@@ -127,9 +127,11 @@ def load_logo_template(template_id: str) -> LogoPlacementTemplate:
 def resolve_logo_placement(
     template_id: str | None,
     manual_parameters: Mapping[str, Any] | None = None,
+    default_placement: Mapping[str, Any] | None = None,
 ) -> LogoPlacementResolution:
-    """Merge manual placement values over a local template and existing defaults."""
+    """Merge manual values over a template, then local view defaults and auto defaults."""
     manual = _validate_placement(manual_parameters or {}) if manual_parameters else {}
+    defaults = _validate_placement(default_placement or {}) if default_placement else {}
     template: LogoPlacementTemplate | None = None
     if template_id is not None and template_id.strip():
         template = load_logo_template(template_id)
@@ -141,6 +143,7 @@ def resolve_logo_placement(
         "logo_width_ratio": None,
         "opacity": 1.0,
     }
+    merged.update(defaults)
     if template is not None:
         merged.update(template.placement)
     merged.update(manual)
@@ -154,7 +157,7 @@ def resolve_logo_placement(
     manual_width = "logo_width_ratio" in manual or "scale" in manual
     if manual_width:
         merged["logo_width_ratio"] = manual.get("logo_width_ratio", manual.get("scale"))
-    elif "logo_width_ratio" not in merged and "scale" in merged:
+    elif merged.get("logo_width_ratio") is None and "scale" in merged:
         merged["logo_width_ratio"] = merged["scale"]
     merged.pop("scale", None)
     if merged.get("opacity") is None:

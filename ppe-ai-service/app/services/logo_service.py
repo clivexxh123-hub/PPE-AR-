@@ -16,6 +16,16 @@ _POSITION_RATIOS = {
     "bottom-right": (1.0, 1.0),
 }
 
+# These local profiles anchor artwork to the detected product bounds instead of
+# to the complete input canvas.  They deliberately use the existing
+# ``position`` field so no new back-end task contract is introduced.
+_HELMET_PRINT_PROFILES = {
+    "front": ("helmet_front_print_center", 0.42),
+    "helmet-front-center": ("helmet_front_print_center", 0.42),
+    "back": ("helmet_back_print_center", 0.40),
+    "helmet-back-center": ("helmet_back_print_center", 0.40),
+}
+
 
 def _foreground_bounds(base: Image.Image) -> tuple[int, int, int, int]:
     """Estimate a product region from alpha or a near-solid corner background."""
@@ -52,19 +62,27 @@ def _resolve_logo_placement(
     position_x_ratio: float | None,
     position_y_ratio: float | None,
     logo_width_ratio: float | None,
-) -> tuple[Image.Image, int, int, float, float, float, str]:
+) -> tuple[Image.Image, int, int, float, float, float, str, str | None, dict[str, int] | None]:
+    placement_profile: str | None = None
+    profile_y_ratio: float | None = None
     if position is not None:
         normalized_position = position.strip().lower()
         if normalized_position and normalized_position != "auto":
-            if normalized_position not in _POSITION_RATIOS:
-                raise ValueError(f"Unsupported position: {position}")
-            named_x_ratio, named_y_ratio = _POSITION_RATIOS[normalized_position]
-            if position_x_ratio is None:
-                position_x_ratio = named_x_ratio
-            if position_y_ratio is None:
-                position_y_ratio = named_y_ratio
+            profile = _HELMET_PRINT_PROFILES.get(normalized_position)
+            if profile is not None:
+                placement_profile, profile_y_ratio = profile
+            else:
+                if normalized_position not in _POSITION_RATIOS:
+                    raise ValueError(f"Unsupported position: {position}")
+                named_x_ratio, named_y_ratio = _POSITION_RATIOS[normalized_position]
+                if position_x_ratio is None:
+                    position_x_ratio = named_x_ratio
+                if position_y_ratio is None:
+                    position_y_ratio = named_y_ratio
 
     placement_mode = "auto" if position_x_ratio is None and position_y_ratio is None and logo_width_ratio is None else "manual"
+    if placement_profile is not None and position_x_ratio is None and position_y_ratio is None:
+        placement_mode = "helmet-view-profile"
     bounds = _foreground_bounds(base)
     left, top, right, bottom = bounds
     product_width = max(1, right - left)
@@ -89,18 +107,46 @@ def _resolve_logo_placement(
     min_y = min(margin, available_y)
     max_x = max(min_x, available_x - margin)
     max_y = max(min_y, available_y - margin)
-    if position_x_ratio is None:
+    printable_region_bounds: dict[str, int] | None = None
+    if placement_profile is not None:
+        profile_margin = max(1, min(margin, product_width // 8, product_height // 8))
+        profile_min_x = max(min_x, left + profile_margin)
+        profile_max_x = min(max_x, right - logo.width - profile_margin)
+        profile_min_y = max(min_y, top + profile_margin)
+        profile_max_y = min(max_y, bottom - logo.height - profile_margin)
+        printable_region_bounds = {"left": left, "top": top, "right": right, "bottom": bottom}
+    else:
+        profile_min_x, profile_max_x = min_x, max_x
+        profile_min_y, profile_max_y = min_y, max_y
+
+    if position_x_ratio is None and placement_profile is not None:
+        centered_x = round(left + (product_width - logo.width) / 2)
+        x = _clamp(centered_x, profile_min_x, max(profile_min_x, profile_max_x))
+    elif position_x_ratio is None:
         x = _clamp(round(left + product_width / 2 - logo.width / 2), min_x, max_x)
     else:
         x = _clamp(round((base.width - logo.width) * float(position_x_ratio)), min_x, max_x)
-    if position_y_ratio is None:
+    if position_y_ratio is None and placement_profile is not None:
+        centered_y = round(top + product_height * float(profile_y_ratio) - logo.height / 2)
+        y = _clamp(centered_y, profile_min_y, max(profile_min_y, profile_max_y))
+    elif position_y_ratio is None:
         y = _clamp(round(top + product_height * 0.32 - logo.height / 2), min_y, max_y)
     else:
         y = _clamp(round((base.height - logo.height) * float(position_y_ratio)), min_y, max_y)
 
     available_width = max(1, base.width - logo.width)
     available_height = max(1, base.height - logo.height)
-    return logo, x, y, x / available_width, y / available_height, logo.width / base.width, placement_mode
+    return (
+        logo,
+        x,
+        y,
+        x / available_width,
+        y / available_height,
+        logo.width / base.width,
+        placement_mode,
+        placement_profile,
+        printable_region_bounds,
+    )
 
 def render_printed_design(
     task_id: str,
@@ -139,7 +185,17 @@ def render_printed_design(
     except OSError as exc:
         raise ValueError(f"Unable to read image input: {exc}") from exc
 
-    logo, x, y, final_x_ratio, final_y_ratio, final_width_ratio, placement_mode = _resolve_logo_placement(
+    (
+        logo,
+        x,
+        y,
+        final_x_ratio,
+        final_y_ratio,
+        final_width_ratio,
+        placement_mode,
+        placement_profile,
+        printable_region_bounds,
+    ) = _resolve_logo_placement(
         base,
         logo,
         position=position,
@@ -168,6 +224,8 @@ def render_printed_design(
         "height": base.height,
         "has_alpha": True,
         "placement_mode": placement_mode,
+        "placement_profile": placement_profile,
+        "printable_region_bounds": printable_region_bounds,
         "final_x_ratio": final_x_ratio,
         "final_y_ratio": final_y_ratio,
         "final_width_ratio": final_width_ratio,

@@ -52,7 +52,7 @@ class LogoPlaceRequest(BaseModel):
     base_image: ImageSource | None = Field(default=None, description="需要贴 Logo 的产品底图。")
     logo_image: ImageSource | None = Field(default=None, description="需要处理或贴到画面上的 Logo 图片。")
     template_id: str | None = Field(default=None, description="本地 Logo placement 模板 ID；仅 AI Service MVP 使用。")
-    position: str | None = Field(default=None, description="可选手动位置，例如 center、top-left、bottom-right；缺失时自动定位。")
+    position: str | None = Field(default=None, description="可选手动位置，例如 center、top-left、bottom-right、front、back；缺失时自动定位。")
     scale: float | None = Field(default=None, gt=0, le=1, description="可选手动 Logo 相对底图缩放比例；缺失时自动缩放。")
     position_x_ratio: float | None = Field(default=None, ge=0, le=1, description="可选手动横向位置比例；缺失时自动定位。")
     position_y_ratio: float | None = Field(default=None, ge=0, le=1, description="可选手动纵向位置比例；缺失时自动定位。")
