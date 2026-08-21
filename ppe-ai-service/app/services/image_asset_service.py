@@ -20,6 +20,10 @@ class ImageAssetValidationError(ValueError):
         self.validation_result = validation_result or {}
 
 
+class RetryableImageAssetError(ImageAssetValidationError):
+    """A signed input can be retried after the back end reissues its URL."""
+
+
 def validate_alpha_channel(path: Path, role: str) -> dict[str, Any]:
     """Require a real transparent region for PPE reference compositing."""
     try:
@@ -72,14 +76,19 @@ async def _resolve_for_validation(source: ImageSource, role: str) -> tuple[Path,
     if source.local_path:
         return Path(source.local_path), "local_path", None, None
     if source.url:
-        return await _download_image_url(str(source.url), role)
+        return await _download_image_url(str(source.url), role, retryable_auth_failure=source.retryable_auth_failure)
     raise ImageAssetValidationError(
         f"{role} 图片来源为空。",
         _failed_result(role=role, source_type="unknown", error="image source is empty"),
     )
 
 
-async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | None, str | None]:
+async def _download_image_url(
+    url: str,
+    role: str,
+    *,
+    retryable_auth_failure: bool = False,
+) -> tuple[Path, str, str | None, str | None]:
     try:
         async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
             validate_public_http_url(url, purpose=f"{role} image URL")
@@ -101,7 +110,9 @@ async def _download_image_url(url: str, role: str) -> tuple[Path, str, str | Non
         ) from exc
 
     if response.status_code >= 400:
-        raise ImageAssetValidationError(
+        retryable_auth_status = retryable_auth_failure and response.status_code in {401, 403}
+        error_type = RetryableImageAssetError if retryable_auth_status else ImageAssetValidationError
+        raise error_type(
             f"{role} 图片 URL 返回 HTTP {response.status_code}。",
             _failed_result(
                 role=role,

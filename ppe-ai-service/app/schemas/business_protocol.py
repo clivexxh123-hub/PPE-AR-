@@ -1,6 +1,8 @@
 ﻿from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+from datetime import datetime, timezone
+
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, ValidationError, field_validator, model_validator
 
 from app.schemas.tasks import TaskStatus
 
@@ -11,6 +13,26 @@ _ASSET_PARAMETER_FIELDS = {
     "logo": "logo_image",
     "scene": "scene_image",
 }
+
+_HTTP_URL_ADAPTER = TypeAdapter(HttpUrl)
+
+
+def parse_expiration(value: str, field_name: str) -> datetime:
+    """Parse a formal signed-URL expiry as an aware ISO-8601 datetime."""
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} 必须是合法 ISO-8601 datetime。") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field_name} 必须明确包含 timezone / UTC offset。")
+    return parsed
+
+
+def validate_future_expiration(value: str, field_name: str) -> datetime:
+    parsed = parse_expiration(value, field_name)
+    if parsed <= datetime.now(timezone.utc):
+        raise ValueError(f"{field_name} 已过期。")
+    return parsed
 
 
 def _parameter_url(parameters: dict[str, Any], field: str) -> str | None:
@@ -156,6 +178,10 @@ class GenerationTaskInput(BaseModel):
             raise ValueError(f"正式 /ai/tasks 协议缺少必传字段：{', '.join(missing)}。")
         if not self.callback or not self.callback.strip():
             raise ValueError("正式 /ai/tasks 协议要求 callback 为非空 HTTP(S) URL。")
+        try:
+            _HTTP_URL_ADAPTER.validate_python(self.callback.strip())
+        except ValidationError as exc:
+            raise ValueError("正式 callback 必须是合法的绝对 HTTP(S) URL。") from exc
         if self.output is None:
             raise ValueError("正式 /ai/tasks 协议要求 output。")
 
@@ -165,6 +191,7 @@ class GenerationTaskInput(BaseModel):
             raise ValueError(f"正式 output 缺少必传字段：{', '.join(sorted(missing_output))}。")
         if not self.output.expiresAt:
             raise ValueError("正式 output.expiresAt 不能为空。")
+        validate_future_expiration(self.output.expiresAt, "output.expiresAt")
 
         missing_asset_fields = [
             asset.assetId
@@ -177,6 +204,8 @@ class GenerationTaskInput(BaseModel):
                 + ", ".join(missing_asset_fields)
                 + "。"
             )
+        for index, asset in enumerate(self.inputAssets):
+            validate_future_expiration(asset.expiresAt or "", f"inputAssets[{index}].expiresAt")
 
         roles = {asset.role for asset in self.inputAssets}
         if self.type == "image_generation":

@@ -21,7 +21,7 @@
           "role": "product_reference",
           "version": 1,
           "url": "https://assets.example/products/helmet.png?signature=placeholder",
-          "expiresAt": "2026-08-30T18:00:00.000Z"
+          "expiresAt": "2099-08-30T18:00:00.000Z"
         }
       ],
       "parameters": {
@@ -46,7 +46,7 @@
         "requiredHeaders": {
           "content-type": "image/png"
         },
-        "expiresAt": "2026-08-10T18:00:00.000Z"
+        "expiresAt": "2099-08-30T18:00:00.000Z"
       }
     },
     "product_logo_to_print_render": {
@@ -63,14 +63,14 @@
           "role": "product_reference",
           "version": 1,
           "url": "https://assets.example/products/helmet-front.png?signature=placeholder",
-          "expiresAt": "2026-08-30T18:00:00.000Z"
+          "expiresAt": "2099-08-30T18:00:00.000Z"
         },
         {
           "assetId": "asset_logo_example_002",
           "role": "logo",
           "version": 1,
           "url": "https://assets.example/logos/company-transparent.png?signature=placeholder",
-          "expiresAt": "2026-08-30T18:00:00.000Z"
+          "expiresAt": "2099-08-30T18:00:00.000Z"
         }
       ],
       "parameters": {
@@ -94,7 +94,7 @@
         "requiredHeaders": {
           "content-type": "image/png"
         },
-        "expiresAt": "2026-08-10T18:00:00.000Z"
+        "expiresAt": "2099-08-30T18:00:00.000Z"
       }
     },
     "printed_design_to_image_generation": {
@@ -111,7 +111,7 @@
           "role": "printed_design",
           "version": 1,
           "url": "https://assets.example/results/render_example_002/printed_design.png?signature=placeholder",
-          "expiresAt": "2026-08-30T18:00:00.000Z"
+          "expiresAt": "2099-08-30T18:00:00.000Z"
         }
       ],
       "parameters": {
@@ -136,7 +136,7 @@
         "requiredHeaders": {
           "content-type": "image/png"
         },
-        "expiresAt": "2026-08-10T18:00:00.000Z"
+        "expiresAt": "2099-08-30T18:00:00.000Z"
       }
     },
     "text_to_image_generation": {
@@ -161,7 +161,7 @@
         "uploadUrl": "https://example.com/oss/presigned-put-url?signature=placeholder",
         "method": "PUT",
         "requiredHeaders": {"content-type": "image/png"},
-        "expiresAt": "2026-08-30T18:00:00.000Z"
+        "expiresAt": "2099-08-30T18:00:00.000Z"
       }
     },
     "logo_remove_bg": {
@@ -178,7 +178,7 @@
           "role": "logo",
           "version": 1,
           "url": "https://assets.example/logos/company.jpg?signature=placeholder",
-          "expiresAt": "2026-08-30T18:00:00.000Z"
+          "expiresAt": "2099-08-30T18:00:00.000Z"
         }
       ],
       "parameters": {
@@ -191,7 +191,7 @@
         "uploadUrl": "https://example.com/oss/presigned-put-url?signature=placeholder",
         "method": "PUT",
         "requiredHeaders": {"content-type": "image/png"},
-        "expiresAt": "2026-08-30T18:00:00.000Z"
+        "expiresAt": "2099-08-30T18:00:00.000Z"
       }
     }
   }
