@@ -13,7 +13,7 @@ from app.services.asset_result import build_business_task_result
 from app.services.callback_service import send_worker_callback
 from app.services.error_codes import map_exception_to_error
 from app.services.generation_engine import generate_ai_image
-from app.services.human_wearing_service import render_human_wearing_design
+from app.services.human_wearing_service import render_human_wearing_design, resolve_human_wearing_placement
 from app.services.image_asset_service import (
     ImageAssetValidationError,
     validate_alpha_channel,
@@ -377,21 +377,27 @@ async def _prepare_human_wearing_input(
     if human_path is None or ppe_path is None:
         raise ValueError("human_reference 或 ppe_reference 校验失败。")
 
-    position_x_ratio = float(task.parameters.get("position_x_ratio", 0.5))
-    position_y_ratio = float(task.parameters.get("position_y_ratio", 0.0))
-    ppe_width_ratio = float(
-        task.parameters.get("ppe_width_ratio", task.parameters.get("logo_width_ratio", 0.30))
+    placement = resolve_human_wearing_placement(
+        generate_payload.product_name,
+        generate_payload.product_category,
+        task.parameters,
     )
-    opacity = float(task.parameters.get("opacity", 1.0))
     image_path, metadata_path = render_human_wearing_design(
         f"{task.jobId}-human-wearing",
         human_path,
         ppe_path,
         size=generate_payload.size,
-        position_x_ratio=position_x_ratio,
-        position_y_ratio=position_y_ratio,
-        ppe_width_ratio=ppe_width_ratio,
-        opacity=opacity,
+        position_x_ratio=placement["position_x_ratio"],
+        position_y_ratio=placement["position_y_ratio"],
+        ppe_width_ratio=placement["ppe_width_ratio"],
+        opacity=placement["opacity"],
+    )
+    _append_output_metadata(
+        metadata_path,
+        {
+            "human_wearing_placement_profile": placement["placement_profile"],
+            "human_wearing_manual_override_fields": placement["manual_override_fields"],
+        },
     )
     return image_path, {
         "printed_design_used": True,
@@ -401,10 +407,12 @@ async def _prepare_human_wearing_input(
         "metadata_path": str(metadata_path),
         "human_reference_path": str(human_path),
         "ppe_reference_path": str(ppe_path),
-        "position_x_ratio": position_x_ratio,
-        "position_y_ratio": position_y_ratio,
-        "ppe_width_ratio": ppe_width_ratio,
-        "opacity": opacity,
+        "position_x_ratio": placement["position_x_ratio"],
+        "position_y_ratio": placement["position_y_ratio"],
+        "ppe_width_ratio": placement["ppe_width_ratio"],
+        "opacity": placement["opacity"],
+        "human_wearing_placement_profile": placement["placement_profile"],
+        "human_wearing_manual_override_fields": placement["manual_override_fields"],
     }, validation
 
 
