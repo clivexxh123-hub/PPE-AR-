@@ -161,6 +161,8 @@ def _image_source_from_parameter(value: Any) -> ImageSource | None:
     if not isinstance(value, dict):
         return None
     payload = {key: value.get(key) for key in ("file_id", "url", "local_path") if value.get(key)}
+    if settings.ai_task_require_formal_contract and value.get("retryable_auth_failure"):
+        payload["retryable_auth_failure"] = True
     if not payload:
         return None
     return ImageSource.model_validate(payload)

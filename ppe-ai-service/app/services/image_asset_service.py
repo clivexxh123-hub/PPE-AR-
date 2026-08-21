@@ -54,11 +54,15 @@ async def validate_generate_request_images(payload: GenerateRequest) -> dict[str
     if payload.product_image is not None:
         try:
             result["product_image"] = await validate_image_source(payload.product_image, "product_reference")
+        except RetryableImageAssetError as exc:
+            raise RetryableImageAssetError(str(exc), {"product_image": exc.validation_result}) from exc
         except ImageAssetValidationError as exc:
             raise ImageAssetValidationError(str(exc), {"product_image": exc.validation_result}) from exc
     if payload.logo_image is not None:
         try:
             result["logo_image"] = await validate_image_source(payload.logo_image, "logo")
+        except RetryableImageAssetError as exc:
+            raise RetryableImageAssetError(str(exc), {"logo_image": exc.validation_result}) from exc
         except ImageAssetValidationError as exc:
             raise ImageAssetValidationError(str(exc), {"logo_image": exc.validation_result}) from exc
     return result

@@ -25,9 +25,6 @@
         }
       ],
       "parameters": {
-        "product_image": {
-          "url": "https://assets.example/products/helmet.png?signature=placeholder"
-        },
         "product_name": "工业安全帽",
         "product_category": "个人防护/头部防护/安全帽",
         "scene": "现代工厂车间",
@@ -74,12 +71,6 @@
         }
       ],
       "parameters": {
-        "base_image": {
-          "url": "https://assets.example/products/helmet-front.png?signature=placeholder"
-        },
-        "logo_image": {
-          "url": "https://assets.example/logos/company-transparent.png?signature=placeholder"
-        },
         "position_x_ratio": 0.5,
         "position_y_ratio": 0.45,
         "logo_width_ratio": 0.2,
@@ -115,9 +106,6 @@
         }
       ],
       "parameters": {
-        "product_image": {
-          "url": "https://assets.example/results/render_example_002/printed_design.png?signature=placeholder"
-        },
         "product_name": "工业安全帽",
         "product_category": "个人防护/头部防护/安全帽",
         "scene": "现代工厂车间",
@@ -182,7 +170,6 @@
         }
       ],
       "parameters": {
-        "logo_image": {"url": "https://assets.example/logos/company.jpg?signature=placeholder"},
         "output_format": "png"
       },
       "callback": "https://example.com/internal/v1/jobs/logo_example_005/events",

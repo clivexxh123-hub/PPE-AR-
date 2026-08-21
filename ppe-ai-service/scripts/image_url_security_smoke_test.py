@@ -6,6 +6,7 @@ import ipaddress
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -23,6 +24,7 @@ from app.services.image_asset_service import (
     ImageAssetValidationError,
     RetryableImageAssetError,
     _download_image_url,
+    validate_generate_request_images,
     validate_image_source,
 )
 
@@ -170,6 +172,28 @@ async def _run() -> None:
                         assert map_exception_to_error(exc)[2] is False
                     else:
                         raise AssertionError("compatibility GET HTTP 403 was accepted")
+
+                for image_field in ("product_image", "logo_image"):
+                    payload = SimpleNamespace(
+                        product_image=None,
+                        logo_image=None,
+                    )
+                    setattr(
+                        payload,
+                        image_field,
+                        ImageSource(url="https://public.example/formal-auth.png", retryable_auth_failure=True),
+                    )
+                    with patch(
+                        "app.services.image_asset_service.httpx.AsyncClient",
+                        lambda **kwargs: FakeAsyncClient(status_code=401, **kwargs),
+                    ):
+                        try:
+                            await validate_generate_request_images(payload)
+                        except RetryableImageAssetError as exc:
+                            assert map_exception_to_error(exc)[2] is True
+                            assert image_field in exc.validation_result
+                        else:
+                            raise AssertionError(f"{image_field} lost its retryable error type")
     finally:
         settings.storage_dir = original_storage_dir
         settings.input_dir = original_input_dir

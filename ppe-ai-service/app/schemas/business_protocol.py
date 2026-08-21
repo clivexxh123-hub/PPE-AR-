@@ -7,12 +7,20 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, Validat
 from app.schemas.tasks import TaskStatus
 
 
-_ASSET_PARAMETER_FIELDS = {
-    "product_reference": "product_image",
-    "printed_design": "product_image",
-    "logo": "logo_image",
-    "scene": "scene_image",
+_FORMAL_ALLOWED_ROLES = {
+    "image_generation": {"product_reference", "printed_design"},
+    "logo_remove_bg": {"logo"},
+    "print_render": {"product_reference", "logo"},
 }
+_FORMAL_IMAGE_SOURCE_FIELDS = {
+    "product_image",
+    "logo_image",
+    "base_image",
+    "scene_image",
+    "human_reference",
+    "ppe_reference",
+}
+_IMAGE_SOURCE_KEYS = {"url", "file_id", "local_path"}
 
 _HTTP_URL_ADAPTER = TypeAdapter(HttpUrl)
 
@@ -35,14 +43,8 @@ def validate_future_expiration(value: str, field_name: str) -> datetime:
     return parsed
 
 
-def _parameter_url(parameters: dict[str, Any], field: str) -> str | None:
-    value = parameters.get(field)
-    if isinstance(value, dict):
-        value = value.get("url")
-    if value is None:
-        return None
-    url = str(value).strip()
-    return url or None
+def _has_image_source(value: Any) -> bool:
+    return isinstance(value, dict) and any(value.get(key) is not None for key in _IMAGE_SOURCE_KEYS)
 
 
 class TaskInputAsset(BaseModel):
@@ -208,6 +210,10 @@ class GenerationTaskInput(BaseModel):
             validate_future_expiration(asset.expiresAt or "", f"inputAssets[{index}].expiresAt")
 
         roles = {asset.role for asset in self.inputAssets}
+        allowed_roles = _FORMAL_ALLOWED_ROLES[self.type]
+        unsupported_roles = roles - allowed_roles
+        if unsupported_roles:
+            raise ValueError(f"{self.type} 不支持 inputAssets role：{', '.join(sorted(unsupported_roles))}。")
         if self.type == "image_generation":
             if {"product_reference", "printed_design"} <= roles:
                 raise ValueError("image_generation 不能同时包含 product_reference 与 printed_design。")
@@ -224,23 +230,13 @@ class GenerationTaskInput(BaseModel):
             if missing_roles:
                 raise ValueError(f"{self.type} 缺少必需 inputAssets role：{', '.join(sorted(missing_roles))}。")
 
-        for role, field in _ASSET_PARAMETER_FIELDS.items():
-            matching_assets = [asset for asset in self.inputAssets if asset.role == role]
-            if not matching_assets:
-                continue
-            if len(matching_assets) > 1:
+        for role in roles:
+            if sum(asset.role == role for asset in self.inputAssets) > 1:
                 raise ValueError(f"正式 inputAssets 不允许重复 role：{role}。")
-            parameter_url = _parameter_url(self.parameters, field)
-            asset_url = str(matching_assets[0].url)
-            if parameter_url and parameter_url != asset_url:
-                raise ValueError(
-                    f"parameters.{field}.url 必须与 inputAssets role={role} 的 url 保持一致。"
-                )
 
-        product_asset = next((asset for asset in self.inputAssets if asset.role == "product_reference"), None)
-        base_image_url = _parameter_url(self.parameters, "base_image")
-        if product_asset is not None and base_image_url and base_image_url != str(product_asset.url):
-            raise ValueError("parameters.base_image.url 必须与 inputAssets role=product_reference 的 url 保持一致。")
+        for field in _FORMAL_IMAGE_SOURCE_FIELDS:
+            if _has_image_source(self.parameters.get(field)):
+                raise ValueError(f"正式模式下 parameters.{field} 不能提供图片来源；请使用 inputAssets[].url。")
 
     @field_validator("jobId", "tenantId", "traceId", "modelProfileId", "workflowVersion")
     @classmethod
