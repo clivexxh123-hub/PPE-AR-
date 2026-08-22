@@ -14,6 +14,7 @@ def main() -> None:
     client = TestClient(app)
     health = client.get("/health")
     health.raise_for_status()
+    assert health.json()["engine"] == "mock"
 
     payload = json.loads((ROOT / "samples" / "generate_request.json").read_text(encoding="utf-8-sig"))
     payload["sync"] = True

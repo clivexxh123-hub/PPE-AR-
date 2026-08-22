@@ -536,6 +536,16 @@ def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateReque
     )
 
 
+def _requested_denoise(parameters: dict[str, Any]) -> float | None:
+    value = parameters.get("denoise")
+    if value is None:
+        return None
+    denoise = float(value)
+    if not 0 <= denoise <= 1:
+        raise ValueError("denoise 必须在 0 到 1 之间。")
+    return denoise
+
+
 def _parameters_to_logo_request(parameters: dict[str, Any]) -> LogoPlaceRequest:
     base_value = parameters.get("base_image") or parameters.get("product_image")
     return LogoPlaceRequest(
@@ -577,6 +587,7 @@ def _business_extra(
     callback_result: dict[str, Any] | None = None,
     input_asset_validation: dict[str, Any] | None = None,
     printed_design: dict[str, Any] | None = None,
+    actual_denoise: float | None = None,
 ) -> dict[str, Any]:
     parameters = _parameters_with_input_assets(task)
     product_image_url = _image_url_from_parameter(parameters, "product_image")
@@ -592,11 +603,9 @@ def _business_extra(
     background_generated = bool(printed_design and printed_design.get("background_generated"))
     product_composited = bool(printed_design and printed_design.get("product_composited"))
     product_reference_used = _validated_product_image_path(input_asset_validation) is not None
-    denoise = (
-        settings.comfyui_scene_generation_denoise
-        if scene_generation_used and scene_generation_strategy != "generated_background_composite"
-        else None
-    )
+    denoise = actual_denoise
+    if denoise is None and scene_generation_used and scene_generation_strategy != "generated_background_composite":
+        denoise = settings.comfyui_scene_generation_denoise
     payload: dict[str, Any] = {
         "business_protocol": {
             "jobId": task.jobId,
@@ -690,8 +699,19 @@ def _append_output_metadata(metadata_path, extra: dict[str, Any]) -> None:
     if metadata_path is None or not metadata_path.exists():
         return
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    metadata.update(extra)
+    for key, value in extra.items():
+        if value is None and metadata.get(key) is not None:
+            continue
+        metadata[key] = value
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _output_denoise(metadata_path: Path) -> float | None:
+    try:
+        value = json.loads(metadata_path.read_text(encoding="utf-8")).get("denoise")
+    except (OSError, json.JSONDecodeError):
+        return None
+    return float(value) if value is not None else None
 
 
 def _business_response(record) -> BusinessTaskResponse:
@@ -933,11 +953,12 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             framing=generate_payload.framing,
         )
         prompt = prompt_result.prompt
-        generation_kwargs = (
-            {"generation_mode": generation_mode}
-            if generation_mode in {"human_wearing", "scene_generation"}
-            else {}
-        )
+        generation_kwargs: dict[str, Any] = {}
+        if generation_mode in {"human_wearing", "scene_generation"}:
+            generation_kwargs["generation_mode"] = generation_mode
+        requested_denoise = _requested_denoise(task.parameters)
+        if requested_denoise is not None:
+            generation_kwargs["denoise"] = requested_denoise
         if generation_mode == "scene_generation":
             background_prompt = build_scene_background_prompt(
                 scene=generate_payload.scene,
@@ -1004,6 +1025,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             callback_result=callback_result,
             input_asset_validation=input_asset_validation,
             printed_design=printed_design,
+            actual_denoise=_output_denoise(metadata_path),
         )
         prompt_metadata = prompt_result.metadata()
         extra.update(prompt_metadata)

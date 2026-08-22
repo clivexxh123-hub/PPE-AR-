@@ -236,6 +236,7 @@ async def generate_comfyui_image(
     output_format: str = "png",
     product_image_path: Path | None = None,
     generation_mode: str | None = None,
+    denoise: float | None = None,
 ) -> tuple[Path, Path]:
     ensure_storage_dirs()
     output_dir = settings.output_dir / task_id
@@ -243,12 +244,10 @@ async def generate_comfyui_image(
 
     requested_generation_mode = generation_mode or ("image_to_image" if product_image_path is not None else "text_to_image")
     workflow_generation_mode = "image_to_image" if product_image_path is not None else "text_to_image"
-    generation_denoise = (
-        0.15
-        if requested_generation_mode == "human_wearing"
-        else settings.comfyui_scene_generation_denoise
-        if requested_generation_mode == "scene_generation"
-        else settings.comfyui_denoise
+    generation_denoise = resolve_generation_denoise(
+        requested_generation_mode,
+        workflow_generation_mode,
+        denoise,
     )
     workflow_path = (
         settings.comfyui_image_to_image_workflow_path
@@ -324,3 +323,23 @@ async def generate_comfyui_image(
     }
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     return image_path, metadata_path
+
+
+def resolve_generation_denoise(
+    requested_generation_mode: str,
+    workflow_generation_mode: str,
+    requested_denoise: float | None = None,
+) -> float | None:
+    """Return the effective img2img denoise without inventing a value for text-to-image."""
+    if workflow_generation_mode != "image_to_image":
+        return None
+    if requested_denoise is not None:
+        value = float(requested_denoise)
+        if not 0 <= value <= 1:
+            raise ValueError("denoise 必须在 0 到 1 之间。")
+        return value
+    if requested_generation_mode == "human_wearing":
+        return 0.15
+    if requested_generation_mode == "scene_generation":
+        return settings.comfyui_scene_generation_denoise
+    return settings.comfyui_denoise
