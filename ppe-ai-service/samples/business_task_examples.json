@@ -19,13 +19,12 @@
         {
           "assetId": "asset_product_example_001",
           "role": "product_reference",
-          "version": 1
+          "version": 1,
+          "url": "https://assets.example/products/helmet.png?signature=placeholder",
+          "expiresAt": "2099-08-30T18:00:00.000Z"
         }
       ],
       "parameters": {
-        "product_image": {
-          "url": "https://example.com/products/helmet.png"
-        },
         "product_name": "工业安全帽",
         "product_category": "个人防护/头部防护/安全帽",
         "scene": "现代工厂车间",
@@ -44,7 +43,7 @@
         "requiredHeaders": {
           "content-type": "image/png"
         },
-        "expiresAt": "2026-08-10T18:00:00.000Z"
+        "expiresAt": "2099-08-30T18:00:00.000Z"
       }
     },
     "product_logo_to_print_render": {
@@ -59,21 +58,19 @@
         {
           "assetId": "asset_product_example_002",
           "role": "product_reference",
-          "version": 1
+          "version": 1,
+          "url": "https://assets.example/products/helmet-front.png?signature=placeholder",
+          "expiresAt": "2099-08-30T18:00:00.000Z"
         },
         {
           "assetId": "asset_logo_example_002",
           "role": "logo",
-          "version": 1
+          "version": 1,
+          "url": "https://assets.example/logos/company-transparent.png?signature=placeholder",
+          "expiresAt": "2099-08-30T18:00:00.000Z"
         }
       ],
       "parameters": {
-        "base_image": {
-          "url": "https://example.com/products/helmet-front.png"
-        },
-        "logo_image": {
-          "url": "https://example.com/logos/company-transparent.png"
-        },
         "position_x_ratio": 0.5,
         "position_y_ratio": 0.45,
         "logo_width_ratio": 0.2,
@@ -88,7 +85,7 @@
         "requiredHeaders": {
           "content-type": "image/png"
         },
-        "expiresAt": "2026-08-10T18:00:00.000Z"
+        "expiresAt": "2099-08-30T18:00:00.000Z"
       }
     },
     "printed_design_to_image_generation": {
@@ -102,14 +99,13 @@
       "inputAssets": [
         {
           "assetId": "asset_printed_design_example_003",
-          "role": "product_reference",
-          "version": 1
+          "role": "printed_design",
+          "version": 1,
+          "url": "https://assets.example/results/render_example_002/printed_design.png?signature=placeholder",
+          "expiresAt": "2099-08-30T18:00:00.000Z"
         }
       ],
       "parameters": {
-        "product_image": {
-          "url": "https://example.com/results/render_example_002/printed_design.png"
-        },
         "product_name": "工业安全帽",
         "product_category": "个人防护/头部防护/安全帽",
         "scene": "现代工厂车间",
@@ -128,7 +124,61 @@
         "requiredHeaders": {
           "content-type": "image/png"
         },
-        "expiresAt": "2026-08-10T18:00:00.000Z"
+        "expiresAt": "2099-08-30T18:00:00.000Z"
+      }
+    },
+    "text_to_image_generation": {
+      "jobId": "gen_example_004",
+      "type": "image_generation",
+      "tenantId": "tenant_example",
+      "traceId": "trace_example_004",
+      "attempt": 0,
+      "modelProfileId": "sd15_ppe_product_v1",
+      "workflowVersion": "ppe-marketing-v1.0",
+      "inputAssets": [],
+      "parameters": {
+        "product_name": "工业安全帽",
+        "scene": "现代工业摄影棚",
+        "style": "真实商业产品摄影",
+        "size": "512x512",
+        "output_format": "png"
+      },
+      "callback": "https://example.com/internal/v1/jobs/gen_example_004/events",
+      "output": {
+        "assetKey": "results/tenant_example/gen_example_004/attempt-0/result.png",
+        "uploadUrl": "https://example.com/oss/presigned-put-url?signature=placeholder",
+        "method": "PUT",
+        "requiredHeaders": {"content-type": "image/png"},
+        "expiresAt": "2099-08-30T18:00:00.000Z"
+      }
+    },
+    "logo_remove_bg": {
+      "jobId": "logo_example_005",
+      "type": "logo_remove_bg",
+      "tenantId": "tenant_example",
+      "traceId": "trace_example_005",
+      "attempt": 0,
+      "modelProfileId": "pillow_logo_v1",
+      "workflowVersion": "logo-remove-bg-v1.0",
+      "inputAssets": [
+        {
+          "assetId": "asset_logo_example_005",
+          "role": "logo",
+          "version": 1,
+          "url": "https://assets.example/logos/company.jpg?signature=placeholder",
+          "expiresAt": "2099-08-30T18:00:00.000Z"
+        }
+      ],
+      "parameters": {
+        "output_format": "png"
+      },
+      "callback": "https://example.com/internal/v1/jobs/logo_example_005/events",
+      "output": {
+        "assetKey": "results/tenant_example/logo_example_005/attempt-0/result.png",
+        "uploadUrl": "https://example.com/oss/presigned-put-url?signature=placeholder",
+        "method": "PUT",
+        "requiredHeaders": {"content-type": "image/png"},
+        "expiresAt": "2099-08-30T18:00:00.000Z"
       }
     }
   }

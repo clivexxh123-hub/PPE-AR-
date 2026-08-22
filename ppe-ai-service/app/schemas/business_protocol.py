@@ -1,8 +1,50 @@
 ﻿from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+from datetime import datetime, timezone
+
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, ValidationError, field_validator, model_validator
 
 from app.schemas.tasks import TaskStatus
+
+
+_FORMAL_ALLOWED_ROLES = {
+    "image_generation": {"product_reference", "printed_design"},
+    "logo_remove_bg": {"logo"},
+    "print_render": {"product_reference", "logo"},
+}
+_FORMAL_IMAGE_SOURCE_FIELDS = {
+    "product_image",
+    "logo_image",
+    "base_image",
+    "scene_image",
+    "human_reference",
+    "ppe_reference",
+}
+_IMAGE_SOURCE_KEYS = {"url", "file_id", "local_path"}
+
+_HTTP_URL_ADAPTER = TypeAdapter(HttpUrl)
+
+
+def parse_expiration(value: str, field_name: str) -> datetime:
+    """Parse a formal signed-URL expiry as an aware ISO-8601 datetime."""
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} 必须是合法 ISO-8601 datetime。") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field_name} 必须明确包含 timezone / UTC offset。")
+    return parsed
+
+
+def validate_future_expiration(value: str, field_name: str) -> datetime:
+    parsed = parse_expiration(value, field_name)
+    if parsed <= datetime.now(timezone.utc):
+        raise ValueError(f"{field_name} 已过期。")
+    return parsed
+
+
+def _has_image_source(value: Any) -> bool:
+    return isinstance(value, dict) and any(value.get(key) is not None for key in _IMAGE_SOURCE_KEYS)
 
 
 class TaskInputAsset(BaseModel):
@@ -138,6 +180,10 @@ class GenerationTaskInput(BaseModel):
             raise ValueError(f"正式 /ai/tasks 协议缺少必传字段：{', '.join(missing)}。")
         if not self.callback or not self.callback.strip():
             raise ValueError("正式 /ai/tasks 协议要求 callback 为非空 HTTP(S) URL。")
+        try:
+            _HTTP_URL_ADAPTER.validate_python(self.callback.strip())
+        except ValidationError as exc:
+            raise ValueError("正式 callback 必须是合法的绝对 HTTP(S) URL。") from exc
         if self.output is None:
             raise ValueError("正式 /ai/tasks 协议要求 output。")
 
@@ -147,6 +193,7 @@ class GenerationTaskInput(BaseModel):
             raise ValueError(f"正式 output 缺少必传字段：{', '.join(sorted(missing_output))}。")
         if not self.output.expiresAt:
             raise ValueError("正式 output.expiresAt 不能为空。")
+        validate_future_expiration(self.output.expiresAt, "output.expiresAt")
 
         missing_asset_fields = [
             asset.assetId
@@ -159,16 +206,37 @@ class GenerationTaskInput(BaseModel):
                 + ", ".join(missing_asset_fields)
                 + "。"
             )
+        for index, asset in enumerate(self.inputAssets):
+            validate_future_expiration(asset.expiresAt or "", f"inputAssets[{index}].expiresAt")
 
         roles = {asset.role for asset in self.inputAssets}
-        required_roles = {
-            "image_generation": {"product_reference"},
-            "logo_remove_bg": {"logo"},
-            "print_render": {"product_reference", "logo"},
-        }[self.type]
-        missing_roles = required_roles - roles
-        if missing_roles:
-            raise ValueError(f"{self.type} 缺少必需 inputAssets role：{', '.join(sorted(missing_roles))}。")
+        allowed_roles = _FORMAL_ALLOWED_ROLES[self.type]
+        unsupported_roles = roles - allowed_roles
+        if unsupported_roles:
+            raise ValueError(f"{self.type} 不支持 inputAssets role：{', '.join(sorted(unsupported_roles))}。")
+        if self.type == "image_generation":
+            if {"product_reference", "printed_design"} <= roles:
+                raise ValueError("image_generation 不能同时包含 product_reference 与 printed_design。")
+            if roles and not ({"product_reference", "printed_design"} & roles):
+                raise ValueError(
+                    "image_generation 的非空 inputAssets 必须包含 product_reference 或 printed_design。"
+                )
+        else:
+            required_roles = {
+                "logo_remove_bg": {"logo"},
+                "print_render": {"product_reference", "logo"},
+            }[self.type]
+            missing_roles = required_roles - roles
+            if missing_roles:
+                raise ValueError(f"{self.type} 缺少必需 inputAssets role：{', '.join(sorted(missing_roles))}。")
+
+        for role in roles:
+            if sum(asset.role == role for asset in self.inputAssets) > 1:
+                raise ValueError(f"正式 inputAssets 不允许重复 role：{role}。")
+
+        for field in _FORMAL_IMAGE_SOURCE_FIELDS:
+            if _has_image_source(self.parameters.get(field)):
+                raise ValueError(f"正式模式下 parameters.{field} 不能提供图片来源；请使用 inputAssets[].url。")
 
     @field_validator("jobId", "tenantId", "traceId", "modelProfileId", "workflowVersion")
     @classmethod

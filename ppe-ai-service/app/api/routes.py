@@ -1,5 +1,6 @@
 ﻿import time
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from app.core.config import settings
-from app.schemas.business_protocol import BusinessTaskResponse, GenerationTaskInput, TaskResult, WorkerCallbackEvent
+from app.schemas.business_protocol import BusinessTaskResponse, GenerationTaskInput, TaskResult, WorkerCallbackEvent, parse_expiration
 from app.schemas.tasks import GenerateRequest, ImageSource, LogoPlaceRequest, TaskResponse, TaskStatus
 from app.services.asset_result import build_business_task_result
 from app.services.callback_service import send_worker_callback
@@ -16,6 +17,7 @@ from app.services.generation_engine import generate_ai_image
 from app.services.human_wearing_service import render_human_wearing_design, resolve_human_wearing_placement
 from app.services.image_asset_service import (
     ImageAssetValidationError,
+    RetryableImageAssetError,
     validate_alpha_channel,
     validate_generate_request_images,
     validate_image_source,
@@ -166,6 +168,8 @@ def _image_source_from_parameter(value: Any) -> ImageSource | None:
     if not isinstance(value, dict):
         return None
     payload = {key: value.get(key) for key in ("file_id", "url", "local_path") if value.get(key)}
+    if settings.ai_task_require_formal_contract and value.get("retryable_auth_failure"):
+        payload["retryable_auth_failure"] = True
     if not payload:
         return None
     return ImageSource.model_validate(payload)
@@ -207,12 +211,39 @@ def _parameters_with_input_assets(task: GenerationTaskInput) -> dict[str, Any]:
     for asset in task.inputAssets:
         if asset.url is None:
             continue
-        source = {"url": str(asset.url)}
-        if asset.role == "product_reference" and not parameters.get("product_image"):
-            parameters["product_image"] = source
-        elif asset.role == "logo" and not parameters.get("logo_image"):
-            parameters["logo_image"] = source
+        source = {
+            "url": str(asset.url),
+            **({"retryable_auth_failure": True} if settings.ai_task_require_formal_contract else {}),
+        }
+        field_by_role = {
+            "product_reference": "product_image",
+            "printed_design": "product_image",
+            "logo": "logo_image",
+            "scene": "scene_image",
+        }
+        field = field_by_role.get(asset.role)
+        if field is None:
+            continue
+        if settings.ai_task_require_formal_contract:
+            parameters[field] = source
+            if asset.role == "product_reference" and task.type == "print_render":
+                parameters["base_image"] = source
+        elif not parameters.get(field):
+            parameters[field] = source
     return parameters
+
+
+def _ensure_formal_input_assets_current(task: GenerationTaskInput) -> None:
+    if not settings.ai_task_require_formal_contract:
+        return
+    now = datetime.now(timezone.utc)
+    for index, asset in enumerate(task.inputAssets):
+        expires_at = parse_expiration(asset.expiresAt or "", f"inputAssets[{index}].expiresAt")
+        if expires_at <= now:
+            raise RetryableImageAssetError(
+                f"inputAssets[{index}].expiresAt 在实际使用前已过期。",
+                {"role": asset.role, "validation_status": "failed", "error": "signed input URL expired"},
+            )
 
 
 def _asset_warnings(task: GenerationTaskInput) -> list[dict[str, str]]:
@@ -732,6 +763,7 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
         callback_result = await _report_business_event(task, TaskStatus.running, started_at, progress=10)
         save_task(record, extra=_business_extra(task, callback_result=callback_result))
 
+        _ensure_formal_input_assets_current(task)
         logo_payload = _parameters_to_logo_request(_parameters_with_input_assets(task))
         if logo_payload.logo_image is None:
             raise ValueError("parameters.logo_image 是必填图片输入。")
@@ -861,6 +893,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         callback_result = await _report_business_event(task, TaskStatus.running, started_at, progress=10)
         save_task(record, extra=_business_extra(task, callback_result=callback_result))
 
+        _ensure_formal_input_assets_current(task)
         generate_payload = _parameters_to_generate_request(_parameters_with_input_assets(task))
         input_asset_validation = await validate_generate_request_images(generate_payload)
         save_task(record, extra=_business_extra(task, callback_result=callback_result, input_asset_validation=input_asset_validation))
