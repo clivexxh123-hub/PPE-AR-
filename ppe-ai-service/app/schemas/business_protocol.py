@@ -154,8 +154,8 @@ class GenerationTaskInput(BaseModel):
             raise ValueError("generation_mode 必须是字符串。")
 
         normalized_mode = generation_mode.strip().lower()
-        if normalized_mode not in {"", "human_wearing"}:
-            raise ValueError("generation_mode 仅支持 human_wearing 或留空。")
+        if normalized_mode not in {"", "human_wearing", "scene_generation"}:
+            raise ValueError("generation_mode 仅支持 human_wearing、scene_generation 或留空。")
         if normalized_mode:
             self.parameters = {**self.parameters, "generation_mode": normalized_mode}
         return self

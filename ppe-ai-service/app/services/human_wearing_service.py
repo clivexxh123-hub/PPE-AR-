@@ -1,9 +1,56 @@
 import json
 from pathlib import Path
+from typing import Any, Mapping
 
 from PIL import Image
 
 from app.core.config import ensure_storage_dirs, settings
+
+
+_DEFAULT_PLACEMENT_PROFILE = {
+    "position_x_ratio": 0.5,
+    "position_y_ratio": 0.0,
+    "ppe_width_ratio": 0.30,
+    "opacity": 1.0,
+}
+_CATEGORY_PLACEMENT_PROFILES = (
+    ("goggles", ("护目镜", "goggle", "eyewear", "safety glasses"), {"position_x_ratio": 0.5, "position_y_ratio": 0.31, "ppe_width_ratio": 0.30}),
+    ("gloves", ("手套", "glove"), {"position_x_ratio": 0.5, "position_y_ratio": 0.57, "ppe_width_ratio": 0.36}),
+)
+
+
+def resolve_human_wearing_placement(
+    product_name: str,
+    product_category: str,
+    parameters: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Resolve small category defaults while preserving explicit task overrides."""
+    source = f"{product_name} {product_category}".lower()
+    profile_name = "default"
+    resolved: dict[str, float] = dict(_DEFAULT_PLACEMENT_PROFILE)
+    for candidate_name, keywords, profile in _CATEGORY_PLACEMENT_PROFILES:
+        if any(keyword in source for keyword in keywords):
+            profile_name = candidate_name
+            resolved.update(profile)
+            break
+
+    manual_overrides: list[str] = []
+    for field in ("position_x_ratio", "position_y_ratio", "opacity"):
+        if parameters.get(field) is not None:
+            resolved[field] = float(parameters[field])
+            manual_overrides.append(field)
+    if parameters.get("ppe_width_ratio") is not None:
+        resolved["ppe_width_ratio"] = float(parameters["ppe_width_ratio"])
+        manual_overrides.append("ppe_width_ratio")
+    elif parameters.get("logo_width_ratio") is not None:
+        resolved["ppe_width_ratio"] = float(parameters["logo_width_ratio"])
+        manual_overrides.append("logo_width_ratio")
+
+    return {
+        **resolved,
+        "placement_profile": profile_name,
+        "manual_override_fields": manual_overrides,
+    }
 
 
 def _parse_size(size: str) -> tuple[int, int]:

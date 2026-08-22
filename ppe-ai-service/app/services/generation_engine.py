@@ -12,6 +12,7 @@ async def generate_ai_image(
     output_format: str = "png",
     product_image_path: Path | None = None,
     generation_mode: str | None = None,
+    denoise: float | None = None,
 ) -> tuple[Path, Path, str]:
     """根据配置选择 AI 生成引擎。默认 mock，配置为 comfyui 时调用 ComfyUI。"""
     engine = settings.ai_engine.lower()
@@ -23,6 +24,7 @@ async def generate_ai_image(
             output_format,
             product_image_path=product_image_path,
             generation_mode=generation_mode,
+            denoise=denoise,
         )
         return image_path, metadata_path, "comfyui"
     image_path, metadata_path = generate_mock_image(task_id, prompt, size, output_format)

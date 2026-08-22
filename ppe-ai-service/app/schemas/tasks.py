@@ -27,8 +27,14 @@ class GenerateRequest(BaseModel):
     logo_image: ImageSource | None = Field(default=None, description="Logo 图片，可先为空，后续用于贴图或品牌元素融合。")
     product_name: str = Field(description="产品名称，例如安全帽、护目镜、防护服。")
     product_category: str = Field(description="产品分类，用于辅助生成 Prompt。")
+    template_id: str | None = Field(
+        default=None,
+        description="内置 PPE Prompt 模板 ID：ppe_product_display、ppe_scene_marketing、ppe_human_wearing；缺失时按生成模式选择。",
+    )
     scene: str = Field(description="营销图场景描述。")
     style: str = Field(description="画面风格描述。")
+    view: str | None = Field(default=None, description="可选构图视角：front 或 slight_side；需与 framing 成对提供。")
+    framing: str | None = Field(default=None, description="可选构图景别：half_body 或 full_body；需与 view 成对提供。")
     size: str = Field(description="输出尺寸，格式为 宽x高，例如 1024x1024。")
     prompt_overrides: dict[str, Any] = Field(default_factory=dict, description="Prompt 补充字段，用于前端或后端临时覆盖模板参数。")
     output_format: str = Field(description="输出图片格式，当前默认 png。")
@@ -48,12 +54,13 @@ class LogoPlaceRequest(BaseModel):
 
     base_image: ImageSource | None = Field(default=None, description="需要贴 Logo 的产品底图。")
     logo_image: ImageSource | None = Field(default=None, description="需要处理或贴到画面上的 Logo 图片。")
-    position: str = Field(default="center", description="Logo 放置位置，例如 center、top-left、bottom-right。")
-    scale: float = Field(default=0.25, description="Logo 相对底图的缩放比例。")
-    position_x_ratio: float = Field(default=0.5, ge=0, le=1, description="Logo 左上角在可用横向区域中的比例。")
-    position_y_ratio: float = Field(default=0.5, ge=0, le=1, description="Logo 左上角在可用纵向区域中的比例。")
+    template_id: str | None = Field(default=None, description="本地 Logo placement 模板 ID；仅 AI Service MVP 使用。")
+    position: str | None = Field(default=None, description="可选手动位置，例如 center、top-left、bottom-right、front、back；缺失时自动定位。")
+    scale: float | None = Field(default=None, gt=0, le=1, description="可选手动 Logo 相对底图缩放比例；缺失时自动缩放。")
+    position_x_ratio: float | None = Field(default=None, ge=0, le=1, description="可选手动横向位置比例；缺失时自动定位。")
+    position_y_ratio: float | None = Field(default=None, ge=0, le=1, description="可选手动纵向位置比例；缺失时自动定位。")
     logo_width_ratio: float | None = Field(default=None, gt=0, le=1, description="Logo 宽度占底图宽度的比例。")
-    opacity: float = Field(default=1.0, ge=0, le=1, description="Logo 不透明度。")
+    opacity: float | None = Field(default=None, ge=0, le=1, description="Logo 不透明度；缺失时使用模板或默认 1。")
     output_format: str = Field(default="png", description="输出图片格式，当前默认 png。")
     sync: bool = Field(default=False, description="是否同步执行。联调时可设为 true，正式环境建议异步。")
 

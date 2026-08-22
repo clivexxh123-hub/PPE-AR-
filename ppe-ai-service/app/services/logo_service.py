@@ -3,17 +3,159 @@
 from collections import deque
 
 import json
-from PIL import Image
+from PIL import Image, ImageChops
 
 from app.core.config import ensure_storage_dirs, settings
+
+
+_POSITION_RATIOS = {
+    "center": (0.5, 0.5),
+    "top-left": (0.0, 0.0),
+    "top-right": (1.0, 0.0),
+    "bottom-left": (0.0, 1.0),
+    "bottom-right": (1.0, 1.0),
+}
+
+# These local profiles anchor artwork to the detected product bounds instead of
+# to the complete input canvas.  They deliberately use the existing
+# ``position`` field so no new back-end task contract is introduced.
+_HELMET_PRINT_PROFILES = {
+    "front": ("helmet_front_print_center", 0.42),
+    "helmet-front-center": ("helmet_front_print_center", 0.42),
+    "back": ("helmet_back_print_center", 0.40),
+    "helmet-back-center": ("helmet_back_print_center", 0.40),
+}
+
+
+def _foreground_bounds(base: Image.Image) -> tuple[int, int, int, int]:
+    """Estimate a product region from alpha or a near-solid corner background."""
+    alpha = base.getchannel("A")
+    alpha_min, _ = alpha.getextrema()
+    if alpha_min < 255:
+        bounds = alpha.point(lambda value: 255 if value > 16 else 0).getbbox()
+        if bounds:
+            return bounds
+
+    rgb = base.convert("RGB")
+    corners = [rgb.getpixel(point) for point in ((0, 0), (rgb.width - 1, 0), (0, rgb.height - 1), (rgb.width - 1, rgb.height - 1))]
+    background_color = tuple(round(sum(color[index] for color in corners) / len(corners)) for index in range(3))
+    background = Image.new("RGB", rgb.size, background_color)
+    difference = ImageChops.difference(rgb, background).convert("L")
+    bounds = difference.point(lambda value: 255 if value > 32 else 0).getbbox()
+    if not bounds:
+        return (0, 0, base.width, base.height)
+    left, top, right, bottom = bounds
+    if (right - left) * (bottom - top) >= base.width * base.height * 0.95:
+        return (0, 0, base.width, base.height)
+    return bounds
+
+
+def _clamp(value: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(value, maximum))
+
+
+def _resolve_logo_placement(
+    base: Image.Image,
+    logo: Image.Image,
+    *,
+    position: str | None,
+    position_x_ratio: float | None,
+    position_y_ratio: float | None,
+    logo_width_ratio: float | None,
+) -> tuple[Image.Image, int, int, float, float, float, str, str | None, dict[str, int] | None]:
+    placement_profile: str | None = None
+    profile_y_ratio: float | None = None
+    if position is not None:
+        normalized_position = position.strip().lower()
+        if normalized_position and normalized_position != "auto":
+            profile = _HELMET_PRINT_PROFILES.get(normalized_position)
+            if profile is not None:
+                placement_profile, profile_y_ratio = profile
+            else:
+                if normalized_position not in _POSITION_RATIOS:
+                    raise ValueError(f"Unsupported position: {position}")
+                named_x_ratio, named_y_ratio = _POSITION_RATIOS[normalized_position]
+                if position_x_ratio is None:
+                    position_x_ratio = named_x_ratio
+                if position_y_ratio is None:
+                    position_y_ratio = named_y_ratio
+
+    placement_mode = "auto" if position_x_ratio is None and position_y_ratio is None and logo_width_ratio is None else "manual"
+    if placement_profile is not None and position_x_ratio is None and position_y_ratio is None:
+        placement_mode = "helmet-view-profile"
+    bounds = _foreground_bounds(base)
+    left, top, right, bottom = bounds
+    product_width = max(1, right - left)
+    product_height = max(1, bottom - top)
+    margin = max(2, round(min(base.width, base.height) * 0.03))
+
+    if logo_width_ratio is None:
+        final_width_ratio = min(0.35, max(0.10, product_width / base.width * 0.28))
+    else:
+        final_width_ratio = float(logo_width_ratio)
+    target_width = max(1, round(base.width * final_width_ratio))
+    target_width = min(target_width, max(1, base.width - margin * 2))
+    target_height = max(1, round(logo.height * target_width / logo.width))
+    if target_height > max(1, base.height - margin * 2):
+        target_height = max(1, base.height - margin * 2)
+        target_width = max(1, round(logo.width * target_height / logo.height))
+    logo = logo.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
+    available_x = max(0, base.width - logo.width)
+    available_y = max(0, base.height - logo.height)
+    min_x = min(margin, available_x)
+    min_y = min(margin, available_y)
+    max_x = max(min_x, available_x - margin)
+    max_y = max(min_y, available_y - margin)
+    printable_region_bounds: dict[str, int] | None = None
+    if placement_profile is not None:
+        profile_margin = max(1, min(margin, product_width // 8, product_height // 8))
+        profile_min_x = max(min_x, left + profile_margin)
+        profile_max_x = min(max_x, right - logo.width - profile_margin)
+        profile_min_y = max(min_y, top + profile_margin)
+        profile_max_y = min(max_y, bottom - logo.height - profile_margin)
+        printable_region_bounds = {"left": left, "top": top, "right": right, "bottom": bottom}
+    else:
+        profile_min_x, profile_max_x = min_x, max_x
+        profile_min_y, profile_max_y = min_y, max_y
+
+    if position_x_ratio is None and placement_profile is not None:
+        centered_x = round(left + (product_width - logo.width) / 2)
+        x = _clamp(centered_x, profile_min_x, max(profile_min_x, profile_max_x))
+    elif position_x_ratio is None:
+        x = _clamp(round(left + product_width / 2 - logo.width / 2), min_x, max_x)
+    else:
+        x = _clamp(round((base.width - logo.width) * float(position_x_ratio)), min_x, max_x)
+    if position_y_ratio is None and placement_profile is not None:
+        centered_y = round(top + product_height * float(profile_y_ratio) - logo.height / 2)
+        y = _clamp(centered_y, profile_min_y, max(profile_min_y, profile_max_y))
+    elif position_y_ratio is None:
+        y = _clamp(round(top + product_height * 0.32 - logo.height / 2), min_y, max_y)
+    else:
+        y = _clamp(round((base.height - logo.height) * float(position_y_ratio)), min_y, max_y)
+
+    available_width = max(1, base.width - logo.width)
+    available_height = max(1, base.height - logo.height)
+    return (
+        logo,
+        x,
+        y,
+        x / available_width,
+        y / available_height,
+        logo.width / base.width,
+        placement_mode,
+        placement_profile,
+        printable_region_bounds,
+    )
 
 def render_printed_design(
     task_id: str,
     base_path: Path | None,
     logo_path: Path | None,
-    position_x_ratio: float = 0.5,
-    position_y_ratio: float = 0.5,
-    logo_width_ratio: float = 0.25,
+    position: str | None = None,
+    position_x_ratio: float | None = None,
+    position_y_ratio: float | None = None,
+    logo_width_ratio: float | None = None,
     opacity: float = 1.0,
 ) -> tuple[Path, Path]:
     """Compose an RGBA logo onto a product image using relative coordinates."""
@@ -28,9 +170,11 @@ def render_printed_design(
         ("logo_width_ratio", logo_width_ratio),
         ("opacity", opacity),
     ):
+        if value is None:
+            continue
         if not 0 <= float(value) <= 1:
             raise ValueError(f"{name} must be between 0 and 1")
-    if float(logo_width_ratio) <= 0:
+    if logo_width_ratio is not None and float(logo_width_ratio) <= 0:
         raise ValueError("logo_width_ratio must be greater than 0")
 
     try:
@@ -41,15 +185,28 @@ def render_printed_design(
     except OSError as exc:
         raise ValueError(f"Unable to read image input: {exc}") from exc
 
-    target_width = max(1, min(base.width, round(base.width * float(logo_width_ratio))))
-    target_height = max(1, round(logo.height * target_width / logo.width))
-    logo = logo.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    (
+        logo,
+        x,
+        y,
+        final_x_ratio,
+        final_y_ratio,
+        final_width_ratio,
+        placement_mode,
+        placement_profile,
+        printable_region_bounds,
+    ) = _resolve_logo_placement(
+        base,
+        logo,
+        position=position,
+        position_x_ratio=position_x_ratio,
+        position_y_ratio=position_y_ratio,
+        logo_width_ratio=logo_width_ratio,
+    )
     if float(opacity) < 1:
         alpha = logo.getchannel("A").point(lambda value: round(value * float(opacity)))
         logo.putalpha(alpha)
 
-    x = round((base.width - logo.width) * float(position_x_ratio))
-    y = round((base.height - logo.height) * float(position_y_ratio))
     base.alpha_composite(logo, (x, y))
 
     output_dir = settings.output_dir / task_id
@@ -66,9 +223,15 @@ def render_printed_design(
         "width": base.width,
         "height": base.height,
         "has_alpha": True,
-        "position_x_ratio": float(position_x_ratio),
-        "position_y_ratio": float(position_y_ratio),
-        "logo_width_ratio": float(logo_width_ratio),
+        "placement_mode": placement_mode,
+        "placement_profile": placement_profile,
+        "printable_region_bounds": printable_region_bounds,
+        "final_x_ratio": final_x_ratio,
+        "final_y_ratio": final_y_ratio,
+        "final_width_ratio": final_width_ratio,
+        "position_x_ratio": final_x_ratio,
+        "position_y_ratio": final_y_ratio,
+        "logo_width_ratio": final_width_ratio,
         "opacity": float(opacity),
         "position_x": x,
         "position_y": y,

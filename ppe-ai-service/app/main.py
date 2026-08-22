@@ -15,4 +15,4 @@ app.include_router(router)
 
 @app.get("/health", summary="健康检查", tags=["系统状态"])
 def health_check() -> dict[str, str]:
-    return {"status": "ok", "service": settings.app_name}
+    return {"status": "ok", "service": settings.app_name, "engine": settings.ai_engine}

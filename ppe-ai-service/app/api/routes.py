@@ -14,7 +14,7 @@ from app.services.asset_result import build_business_task_result
 from app.services.callback_service import send_worker_callback
 from app.services.error_codes import map_exception_to_error
 from app.services.generation_engine import generate_ai_image
-from app.services.human_wearing_service import render_human_wearing_design
+from app.services.human_wearing_service import render_human_wearing_design, resolve_human_wearing_placement
 from app.services.image_asset_service import (
     ImageAssetValidationError,
     RetryableImageAssetError,
@@ -24,7 +24,14 @@ from app.services.image_asset_service import (
 )
 from app.services.input_adapter import resolve_image_source, save_upload
 from app.services.logo_service import normalize_logo, render_printed_design
-from app.services.prompt_templates import build_human_wearing_prompt, build_prompt
+from app.services.logo_archive_service import archive_logo_asset
+from app.services.logo_template_store import LogoPlacementResolution, resolve_logo_placement
+from app.services.prompt_templates import (
+    PromptBuildResult,
+    build_managed_prompt,
+    build_scene_background_prompt,
+)
+from app.services.scene_composite_service import render_scene_marketing_image
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
 from app.services.url_security import redact_headers, redact_sensitive_data, redact_url
@@ -284,6 +291,77 @@ def _validated_logo_image_path(input_asset_validation: dict[str, Any] | None) ->
     return _validated_image_path(input_asset_validation, "logo_image")
 
 
+def _placement_summary(metadata_path: Path) -> dict[str, Any]:
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {
+        key: metadata[key]
+        for key in (
+            "placement_mode",
+            "placement_profile",
+            "printable_region_bounds",
+            "final_x_ratio",
+            "final_y_ratio",
+            "final_width_ratio",
+        )
+        if key in metadata
+    }
+
+
+def _helmet_view_placement_defaults(parameters: dict[str, Any]) -> dict[str, str]:
+    """Map existing optional view hints to local helmet print-center profiles.
+
+    View is intentionally read from loose local parameters rather than added to
+    the frozen task contract.  A template or explicit manual placement is
+    merged above this default by ``resolve_logo_placement``.
+    """
+    aliases = {
+        "front": "front",
+        "正面": "front",
+        "back": "back",
+        "背面": "back",
+    }
+    for key in ("product_view", "view", "view_type", "viewType"):
+        value = parameters.get(key)
+        if value is None:
+            continue
+        normalized = str(value).strip().lower()
+        if normalized in aliases:
+            return {"position": aliases[normalized]}
+    return {}
+
+
+def _manual_placement_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
+    keys = ("position", "position_x_ratio", "position_y_ratio", "logo_width_ratio", "scale", "opacity")
+    return {key: parameters[key] for key in keys if parameters.get(key) is not None}
+
+
+def _logo_template_metadata(resolution: LogoPlacementResolution, metadata_path: Path) -> dict[str, Any]:
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        metadata = {}
+    final_keys = (
+        "placement_mode",
+        "placement_profile",
+        "printable_region_bounds",
+        "final_x_ratio",
+        "final_y_ratio",
+        "final_width_ratio",
+        "position_x_ratio",
+        "position_y_ratio",
+        "logo_width_ratio",
+        "opacity",
+        "position_x",
+        "position_y",
+        "logo_width",
+        "logo_height",
+    )
+    return resolution.metadata({key: metadata.get(key) for key in final_keys if key in metadata})
+
+
 def _prepare_generation_input(
     task: GenerationTaskInput,
     input_asset_validation: dict[str, Any] | None,
@@ -301,29 +379,35 @@ def _prepare_generation_input(
             "reason": f"missing_validated_{'_and_'.join(missing)}",
         }
 
-    position_x_ratio = float(task.parameters.get("position_x_ratio", 0.5))
-    position_y_ratio = float(task.parameters.get("position_y_ratio", 0.5))
-    logo_width_ratio = float(task.parameters.get("logo_width_ratio", 0.25))
-    opacity = float(task.parameters.get("opacity", 1.0))
+    template_id = (
+        str(task.parameters["logo_template_id"])
+        if task.parameters.get("logo_template_id") is not None
+        else None
+    )
+    placement_resolution = resolve_logo_placement(
+        template_id,
+        _manual_placement_parameters(task.parameters),
+        _helmet_view_placement_defaults(task.parameters),
+    )
+    logo_archive_metadata = {"logo_used_asset": archive_logo_asset(logo_image_path, "used_in_print_render").metadata()}
     printed_design_path, printed_metadata_path = render_printed_design(
         f"{task.jobId}-printed-design",
         product_image_path,
         logo_image_path,
-        position_x_ratio=position_x_ratio,
-        position_y_ratio=position_y_ratio,
-        logo_width_ratio=logo_width_ratio,
-        opacity=opacity,
+        **placement_resolution.render_kwargs(),
     )
+    placement = _placement_summary(printed_metadata_path)
+    template_metadata = _logo_template_metadata(placement_resolution, printed_metadata_path)
+    _append_output_metadata(printed_metadata_path, {**template_metadata, **logo_archive_metadata})
     return printed_design_path, {
         "printed_design_used": True,
         "path": str(printed_design_path),
         "metadata_path": str(printed_metadata_path),
         "product_image_path": str(product_image_path),
         "logo_image_path": str(logo_image_path),
-        "position_x_ratio": position_x_ratio,
-        "position_y_ratio": position_y_ratio,
-        "logo_width_ratio": logo_width_ratio,
-        "opacity": opacity,
+        **placement,
+        **template_metadata,
+        **logo_archive_metadata,
     }
 
 
@@ -363,21 +447,27 @@ async def _prepare_human_wearing_input(
     if human_path is None or ppe_path is None:
         raise ValueError("human_reference 或 ppe_reference 校验失败。")
 
-    position_x_ratio = float(task.parameters.get("position_x_ratio", 0.5))
-    position_y_ratio = float(task.parameters.get("position_y_ratio", 0.0))
-    ppe_width_ratio = float(
-        task.parameters.get("ppe_width_ratio", task.parameters.get("logo_width_ratio", 0.30))
+    placement = resolve_human_wearing_placement(
+        generate_payload.product_name,
+        generate_payload.product_category,
+        task.parameters,
     )
-    opacity = float(task.parameters.get("opacity", 1.0))
     image_path, metadata_path = render_human_wearing_design(
         f"{task.jobId}-human-wearing",
         human_path,
         ppe_path,
         size=generate_payload.size,
-        position_x_ratio=position_x_ratio,
-        position_y_ratio=position_y_ratio,
-        ppe_width_ratio=ppe_width_ratio,
-        opacity=opacity,
+        position_x_ratio=placement["position_x_ratio"],
+        position_y_ratio=placement["position_y_ratio"],
+        ppe_width_ratio=placement["ppe_width_ratio"],
+        opacity=placement["opacity"],
+    )
+    _append_output_metadata(
+        metadata_path,
+        {
+            "human_wearing_placement_profile": placement["placement_profile"],
+            "human_wearing_manual_override_fields": placement["manual_override_fields"],
+        },
     )
     return image_path, {
         "printed_design_used": True,
@@ -387,11 +477,38 @@ async def _prepare_human_wearing_input(
         "metadata_path": str(metadata_path),
         "human_reference_path": str(human_path),
         "ppe_reference_path": str(ppe_path),
-        "position_x_ratio": position_x_ratio,
-        "position_y_ratio": position_y_ratio,
-        "ppe_width_ratio": ppe_width_ratio,
-        "opacity": opacity,
+        "position_x_ratio": placement["position_x_ratio"],
+        "position_y_ratio": placement["position_y_ratio"],
+        "ppe_width_ratio": placement["ppe_width_ratio"],
+        "opacity": placement["opacity"],
+        "human_wearing_placement_profile": placement["placement_profile"],
+        "human_wearing_manual_override_fields": placement["manual_override_fields"],
     }, validation
+
+
+def _prepare_scene_generation_foreground(
+    input_asset_validation: dict[str, Any] | None,
+) -> tuple[Path, dict[str, Any]]:
+    """Require a transparent PPE foreground for deterministic scene compositing."""
+    validation = dict(input_asset_validation or {})
+    product_path = _validated_product_image_path(validation)
+    if product_path is None:
+        raise ValueError("scene_generation 需要已校验通过的 parameters.product_image。")
+    try:
+        product_validation = validation.get("product_image")
+        if not isinstance(product_validation, dict):
+            product_validation = {}
+            validation["product_image"] = product_validation
+        product_validation.update(validate_alpha_channel(product_path, "product_image"))
+    except ImageAssetValidationError as exc:
+        combined = dict(validation)
+        product_validation = combined.get("product_image")
+        if isinstance(product_validation, dict):
+            product_validation.update(exc.validation_result)
+        else:
+            combined["product_image"] = exc.validation_result
+        raise ImageAssetValidationError(str(exc), combined) from exc
+    return product_path, validation
 
 
 def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateRequest:
@@ -403,8 +520,15 @@ def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateReque
         logo_image=_image_source_from_parameter(parameters.get("logo_image")),
         product_name=str(parameters.get("product_name", "")).strip(),
         product_category=str(parameters.get("product_category", "")).strip(),
+        template_id=(
+            str(parameters["template_id"]).strip()
+            if parameters.get("template_id") is not None
+            else None
+        ),
         scene=str(parameters.get("scene", "")).strip(),
         style=str(parameters.get("style", "")).strip(),
+        view=str(parameters["view"]).strip() if parameters.get("view") is not None else None,
+        framing=str(parameters["framing"]).strip() if parameters.get("framing") is not None else None,
         size=str(parameters.get("size", "512x512")).strip(),
         prompt_overrides=prompt_overrides,
         output_format=str(parameters.get("output_format", "png")).strip(),
@@ -412,21 +536,40 @@ def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateReque
     )
 
 
+def _requested_denoise(parameters: dict[str, Any]) -> float | None:
+    value = parameters.get("denoise")
+    if value is None:
+        return None
+    denoise = float(value)
+    if not 0 <= denoise <= 1:
+        raise ValueError("denoise 必须在 0 到 1 之间。")
+    return denoise
+
+
 def _parameters_to_logo_request(parameters: dict[str, Any]) -> LogoPlaceRequest:
     base_value = parameters.get("base_image") or parameters.get("product_image")
     return LogoPlaceRequest(
         base_image=_image_source_from_parameter(base_value),
         logo_image=_image_source_from_parameter(parameters.get("logo_image")),
-        position=str(parameters.get("position", "center")),
-        scale=float(parameters.get("scale", 0.25)),
-        position_x_ratio=float(parameters.get("position_x_ratio", 0.5)),
-        position_y_ratio=float(parameters.get("position_y_ratio", 0.5)),
+        template_id=str(parameters["template_id"]) if parameters.get("template_id") is not None else None,
+        position=str(parameters["position"]) if parameters.get("position") is not None else None,
+        scale=float(parameters["scale"]) if parameters.get("scale") is not None else None,
+        position_x_ratio=(
+            float(parameters["position_x_ratio"])
+            if parameters.get("position_x_ratio") is not None
+            else None
+        ),
+        position_y_ratio=(
+            float(parameters["position_y_ratio"])
+            if parameters.get("position_y_ratio") is not None
+            else None
+        ),
         logo_width_ratio=(
             float(parameters["logo_width_ratio"])
             if parameters.get("logo_width_ratio") is not None
             else None
         ),
-        opacity=float(parameters.get("opacity", 1.0)),
+        opacity=float(parameters["opacity"]) if parameters.get("opacity") is not None else None,
         output_format=str(parameters.get("output_format", "png")),
         sync=bool(parameters.get("sync", False)),
     )
@@ -444,12 +587,25 @@ def _business_extra(
     callback_result: dict[str, Any] | None = None,
     input_asset_validation: dict[str, Any] | None = None,
     printed_design: dict[str, Any] | None = None,
+    actual_denoise: float | None = None,
 ) -> dict[str, Any]:
     parameters = _parameters_with_input_assets(task)
     product_image_url = _image_url_from_parameter(parameters, "product_image")
     logo_image_url = _image_url_from_parameter(parameters, "logo_image")
     generation_mode = str(task.parameters.get("generation_mode", "")).strip() or None
     human_wearing_used = bool(printed_design and printed_design.get("human_wearing_used"))
+    scene_generation_used = generation_mode == "scene_generation"
+    scene_generation_strategy = (
+        str(printed_design.get("scene_generation_strategy"))
+        if printed_design and printed_design.get("scene_generation_strategy")
+        else None
+    )
+    background_generated = bool(printed_design and printed_design.get("background_generated"))
+    product_composited = bool(printed_design and printed_design.get("product_composited"))
+    product_reference_used = _validated_product_image_path(input_asset_validation) is not None
+    denoise = actual_denoise
+    if denoise is None and scene_generation_used and scene_generation_strategy != "generated_background_composite":
+        denoise = settings.comfyui_scene_generation_denoise
     payload: dict[str, Any] = {
         "business_protocol": {
             "jobId": task.jobId,
@@ -465,6 +621,14 @@ def _business_extra(
             "callback_source": "GenerationTaskInput.callback",
             "generation_mode": generation_mode,
             "human_wearing_used": human_wearing_used,
+            "scene_generation_used": scene_generation_used,
+            "scene_generation_strategy": scene_generation_strategy,
+            "background_generated": background_generated,
+            "product_composited": product_composited,
+            "scene": str(task.parameters.get("scene", "")).strip() or None,
+            "style": str(task.parameters.get("style", "")).strip() or None,
+            "product_reference_used": product_reference_used,
+            "denoise": denoise,
             "parameters": redact_sensitive_data(task.parameters),
             "image_urls": {
                 "product_image": redact_url(product_image_url),
@@ -495,6 +659,12 @@ def _business_extra(
     payload["printed_design_used"] = bool(printed_design and printed_design.get("printed_design_used"))
     payload["generation_mode"] = generation_mode
     payload["human_wearing_used"] = human_wearing_used
+    payload["scene_generation_used"] = scene_generation_used
+    payload["scene_generation_strategy"] = scene_generation_strategy
+    payload["background_generated"] = background_generated
+    payload["product_composited"] = product_composited
+    payload["product_reference_used"] = product_reference_used
+    payload["denoise"] = denoise
     if printed_design is not None:
         payload["printed_design"] = printed_design
     if result is not None:
@@ -529,8 +699,19 @@ def _append_output_metadata(metadata_path, extra: dict[str, Any]) -> None:
     if metadata_path is None or not metadata_path.exists():
         return
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    metadata.update(extra)
+    for key, value in extra.items():
+        if value is None and metadata.get(key) is not None:
+            continue
+        metadata[key] = value
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _output_denoise(metadata_path: Path) -> float | None:
+    try:
+        value = json.loads(metadata_path.read_text(encoding="utf-8")).get("denoise")
+    except (OSError, json.JSONDecodeError):
+        return None
+    return float(value) if value is not None else None
 
 
 def _business_response(record) -> BusinessTaskResponse:
@@ -591,6 +772,8 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
     started_at = time.monotonic()
     input_asset_validation: dict[str, Any] | None = None
     printed_design: dict[str, Any] | None = None
+    template_metadata: dict[str, Any] = {}
+    archive_metadata: dict[str, Any] = {}
     record = load_task(task.jobId)
     if record is None:
         return
@@ -610,9 +793,12 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
         logo_path = _validated_logo_image_path(input_asset_validation)
         if logo_path is None:
             raise ValueError("logo_image 校验失败。")
+        archive_metadata["logo_original_asset"] = archive_logo_asset(logo_path, "original").metadata()
 
         if task.type == "logo_remove_bg":
             image_path, metadata_path = normalize_logo(task.jobId, logo_path, logo_payload.output_format)
+            archive_metadata["logo_transparent_asset"] = archive_logo_asset(image_path, "transparent").metadata()
+            _append_output_metadata(metadata_path, archive_metadata)
             completion_message = "业务 Logo 背景抠除已完成。"
         elif task.type == "print_render":
             if logo_payload.base_image is None:
@@ -621,25 +807,29 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
             base_path = _validated_image_path(input_asset_validation, "base_image")
             if base_path is None:
                 raise ValueError("base_image 校验失败。")
+            placement_resolution = resolve_logo_placement(
+                logo_payload.template_id,
+                _manual_placement_parameters(logo_payload.model_dump()),
+                _helmet_view_placement_defaults(task.parameters),
+            )
             image_path, metadata_path = render_printed_design(
                 task.jobId,
                 base_path,
                 logo_path,
-                position_x_ratio=logo_payload.position_x_ratio,
-                position_y_ratio=logo_payload.position_y_ratio,
-                logo_width_ratio=logo_payload.logo_width_ratio or logo_payload.scale,
-                opacity=logo_payload.opacity,
+                **placement_resolution.render_kwargs(),
             )
+            archive_metadata["logo_used_asset"] = archive_logo_asset(logo_path, "used_in_print_render").metadata()
+            template_metadata = _logo_template_metadata(placement_resolution, metadata_path)
+            _append_output_metadata(metadata_path, {**template_metadata, **archive_metadata})
             printed_design = {
                 "printed_design_used": True,
                 "path": str(image_path),
                 "metadata_path": str(metadata_path),
                 "product_image_path": str(base_path),
                 "logo_image_path": str(logo_path),
-                "position_x_ratio": logo_payload.position_x_ratio,
-                "position_y_ratio": logo_payload.position_y_ratio,
-                "logo_width_ratio": logo_payload.logo_width_ratio or logo_payload.scale,
-                "opacity": logo_payload.opacity,
+                **_placement_summary(metadata_path),
+                **template_metadata,
+                **archive_metadata,
             }
             completion_message = "业务印刷设计图已生成。"
         else:
@@ -669,6 +859,12 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
             input_asset_validation=input_asset_validation,
             printed_design=printed_design,
         )
+        if template_metadata:
+            extra.update(template_metadata)
+            extra["business_protocol"].update(template_metadata)
+        if archive_metadata:
+            extra.update(archive_metadata)
+            extra["business_protocol"].update(archive_metadata)
         _append_output_metadata(metadata_path, extra)
         save_task(record, extra=extra)
     except Exception as exc:
@@ -725,6 +921,15 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             generation_input_path, printed_design, input_asset_validation = await _prepare_human_wearing_input(
                 task, generate_payload, input_asset_validation
             )
+        elif generation_mode == "scene_generation":
+            generation_input_path, input_asset_validation = _prepare_scene_generation_foreground(input_asset_validation)
+            printed_design = {
+                "printed_design_used": False,
+                "scene_generation_strategy": "generated_background_composite",
+                "background_generated": False,
+                "product_composited": False,
+                "ppe_foreground_path": str(generation_input_path),
+            }
         else:
             generation_input_path, printed_design = _prepare_generation_input(task, input_asset_validation)
         save_task(
@@ -736,23 +941,73 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 printed_design=printed_design,
             ),
         )
-        prompt_builder = build_human_wearing_prompt if generation_mode == "human_wearing" else build_prompt
-        prompt = prompt_builder(
+        prompt_result = build_managed_prompt(
             product_name=generate_payload.product_name,
             product_category=generate_payload.product_category,
             scene=generate_payload.scene,
             style=generate_payload.style,
             overrides=generate_payload.prompt_overrides,
+            template_id=generate_payload.template_id,
+            generation_mode=generation_mode,
+            view=generate_payload.view,
+            framing=generate_payload.framing,
         )
-        generation_kwargs = {"generation_mode": "human_wearing"} if generation_mode == "human_wearing" else {}
-        image_path, metadata_path, engine = await generate_ai_image(
-            task.jobId,
-            prompt,
-            generate_payload.size,
-            generate_payload.output_format,
-            product_image_path=generation_input_path,
-            **generation_kwargs,
-        )
+        prompt = prompt_result.prompt
+        generation_kwargs: dict[str, Any] = {}
+        if generation_mode in {"human_wearing", "scene_generation"}:
+            generation_kwargs["generation_mode"] = generation_mode
+        requested_denoise = _requested_denoise(task.parameters)
+        if requested_denoise is not None:
+            generation_kwargs["denoise"] = requested_denoise
+        if generation_mode == "scene_generation":
+            background_prompt = build_scene_background_prompt(
+                scene=generate_payload.scene,
+                style=generate_payload.style,
+                overrides=generate_payload.prompt_overrides,
+            )
+            prompt_result = PromptBuildResult(
+                template_id=prompt_result.template_id,
+                selection_rule=prompt_result.selection_rule,
+                prompt=background_prompt,
+                view=prompt_result.view,
+                framing=prompt_result.framing,
+            )
+            background_path, background_metadata_path, background_engine = await generate_ai_image(
+                f"{task.jobId}-scene-background",
+                background_prompt,
+                generate_payload.size,
+                generate_payload.output_format,
+                generation_mode="scene_generation",
+            )
+            image_path, metadata_path = render_scene_marketing_image(
+                task.jobId,
+                background_path,
+                generation_input_path,
+                size=generate_payload.size,
+                product_width_ratio=float(task.parameters.get("scene_product_width_ratio", 0.55)),
+                position_x_ratio=float(task.parameters.get("position_x_ratio", 0.5)),
+                position_y_ratio=float(task.parameters.get("position_y_ratio", 0.58)),
+            )
+            engine = f"{background_engine}+pillow"
+            printed_design.update(
+                {
+                    "background_generated": True,
+                    "product_composited": True,
+                    "background_path": str(background_path),
+                    "background_metadata_path": str(background_metadata_path),
+                    "path": str(image_path),
+                    "metadata_path": str(metadata_path),
+                }
+            )
+        else:
+            image_path, metadata_path, engine = await generate_ai_image(
+                task.jobId,
+                prompt,
+                generate_payload.size,
+                generate_payload.output_format,
+                product_image_path=generation_input_path,
+                **generation_kwargs,
+            )
         result = build_business_task_result(task.tenantId, task.jobId, task.attempt, image_path, asset_key=task.output.assetKey if task.output else None)
         result_url = f"/outputs/{task.jobId}/{image_path.name}"
         storage_result = await upload_result(image_path, result.assetKey, local_url=result_url, output=task.output)
@@ -770,7 +1025,11 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             callback_result=callback_result,
             input_asset_validation=input_asset_validation,
             printed_design=printed_design,
+            actual_denoise=_output_denoise(metadata_path),
         )
+        prompt_metadata = prompt_result.metadata()
+        extra.update(prompt_metadata)
+        extra["business_protocol"].update(prompt_metadata)
         _append_output_metadata(metadata_path, extra)
         save_task(record, extra=extra)
     except Exception as exc:
@@ -812,21 +1071,31 @@ async def _run_generate_task(task_id: str, payload: GenerateRequest) -> None:
         save_task(record)
         await resolve_image_source(payload.product_image)
         await resolve_image_source(payload.logo_image)
-        prompt = build_prompt(
+        prompt_result = build_managed_prompt(
             product_name=payload.product_name,
             product_category=payload.product_category,
             scene=payload.scene,
             style=payload.style,
             overrides=payload.prompt_overrides,
+            template_id=payload.template_id,
+            view=payload.view,
+            framing=payload.framing,
         )
-        image_path, metadata_path, engine = await generate_ai_image(task_id, prompt, payload.size, payload.output_format)
+        image_path, metadata_path, engine = await generate_ai_image(
+            task_id,
+            prompt_result.prompt,
+            payload.size,
+            payload.output_format,
+        )
         record.status = TaskStatus.succeeded
         record.message = f"图片已生成，当前使用 {engine} 引擎。"
         record.output_path = str(image_path)
         record.metadata_path = str(metadata_path)
         record.result_url = f"/outputs/{task_id}/{image_path.name}"
         record.metadata_url = f"/outputs/{task_id}/{metadata_path.name}"
-        save_task(record)
+        prompt_metadata = prompt_result.metadata()
+        _append_output_metadata(metadata_path, prompt_metadata)
+        save_task(record, extra=prompt_metadata)
     except Exception as exc:
         record.status = TaskStatus.failed
         record.message = "AI 图片生成失败。"
@@ -838,34 +1107,46 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
     record = load_task(task_id)
     if record is None:
         return
+    template_metadata: dict[str, Any] = {}
+    archive_metadata: dict[str, Any] = {}
     try:
         record.status = TaskStatus.running
         record.message = "正在处理 Logo 图片。"
         save_task(record)
         logo_path = await resolve_image_source(payload.logo_image)
+        if logo_path is not None:
+            archive_metadata["logo_original_asset"] = archive_logo_asset(logo_path, "original").metadata()
         if operation == "place":
             base_path = await resolve_image_source(payload.base_image)
             if base_path is None:
                 image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
+                archive_metadata["logo_transparent_asset"] = archive_logo_asset(image_path, "transparent").metadata()
+                _append_output_metadata(metadata_path, archive_metadata)
             else:
+                placement_resolution = resolve_logo_placement(
+                    payload.template_id,
+                    _manual_placement_parameters(payload.model_dump()),
+                )
                 image_path, metadata_path = render_printed_design(
                     task_id,
                     base_path,
                     logo_path,
-                    position_x_ratio=payload.position_x_ratio,
-                    position_y_ratio=payload.position_y_ratio,
-                    logo_width_ratio=payload.logo_width_ratio or payload.scale,
-                    opacity=payload.opacity,
+                    **placement_resolution.render_kwargs(),
                 )
+                template_metadata = _logo_template_metadata(placement_resolution, metadata_path)
+                archive_metadata["logo_used_asset"] = archive_logo_asset(logo_path, "used_in_print_render").metadata()
+                _append_output_metadata(metadata_path, {**template_metadata, **archive_metadata})
         else:
             image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
+            archive_metadata["logo_transparent_asset"] = archive_logo_asset(image_path, "transparent").metadata()
+            _append_output_metadata(metadata_path, archive_metadata)
         record.status = TaskStatus.succeeded
         record.message = "Logo 图片处理已完成。"
         record.output_path = str(image_path)
         record.metadata_path = str(metadata_path)
         record.result_url = f"/outputs/{task_id}/{image_path.name}"
         record.metadata_url = f"/outputs/{task_id}/{metadata_path.name}"
-        save_task(record)
+        save_task(record, extra={**template_metadata, **archive_metadata})
     except Exception as exc:
         record.status = TaskStatus.failed
         record.message = "Logo 处理失败。"

@@ -38,10 +38,12 @@ def _task_payload(
 
 
 def _run(output_root: Path) -> None:
+    original_storage_dir = settings.storage_dir
     original_output_dir = settings.output_dir
     original_task_dir = settings.task_dir
     original_input_dir = settings.input_dir
     original_engine = settings.ai_engine
+    settings.storage_dir = output_root / "storage"
     settings.output_dir = output_root / "outputs"
     settings.task_dir = output_root / "tasks"
     settings.input_dir = output_root / "inputs"
@@ -216,6 +218,7 @@ def _run(output_root: Path) -> None:
             assert "detail" in invalid_generation_mode.json()
         print("BUSINESS_LOGO_TASK_SMOKE_OK")
     finally:
+        settings.storage_dir = original_storage_dir
         settings.output_dir = original_output_dir
         settings.task_dir = original_task_dir
         settings.input_dir = original_input_dir

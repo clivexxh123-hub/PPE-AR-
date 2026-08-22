@@ -26,8 +26,12 @@ def _expect_value_error(callback) -> None:
 
 
 def _run(output_root: Path) -> None:
+    original_storage_dir = settings.storage_dir
+    original_input_dir = settings.input_dir
     original_output_dir = settings.output_dir
     original_task_dir = settings.task_dir
+    settings.storage_dir = output_root / "storage"
+    settings.input_dir = settings.storage_dir / "inputs"
     settings.output_dir = output_root
     settings.task_dir = output_root / "tasks"
     try:
@@ -89,6 +93,8 @@ def _run(output_root: Path) -> None:
             assert route_metadata["engine"] == "pillow-simple-background-removal"
         print("LOGO_REMOVE_BG_SMOKE_OK")
     finally:
+        settings.storage_dir = original_storage_dir
+        settings.input_dir = original_input_dir
         settings.output_dir = original_output_dir
         settings.task_dir = original_task_dir
 
