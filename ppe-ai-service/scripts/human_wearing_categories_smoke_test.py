@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -25,8 +27,8 @@ from app.services.comfyui_engine import prepare_img2img_input  # noqa: E402
 from app.services.task_store import create_task, load_task, load_task_payload  # noqa: E402
 
 
-def _make_human(path: Path) -> None:
-    image = Image.new("RGB", (360, 300), (210, 220, 225))
+def _make_human(path: Path, background: tuple[int, int, int] = (210, 220, 225)) -> None:
+    image = Image.new("RGB", (360, 300), background)
     draw = ImageDraw.Draw(image)
     draw.rectangle((90, 145, 270, 300), fill=(60, 92, 116))
     draw.ellipse((125, 40, 235, 165), fill=(224, 175, 135))
@@ -51,6 +53,32 @@ def _make_gloves(path: Path) -> None:
         x = 40 + index * 18
         draw.rounded_rectangle((x, 12, x + 16, 68), radius=8, fill=(230, 155, 30, 255))
     draw.rounded_rectangle((15, 48, 62, 72), radius=10, fill=(230, 155, 30, 255))
+    image.save(path, format="PNG")
+
+
+def _make_helmet(path: Path) -> None:
+    image = Image.new("RGBA", (190, 110), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.pieslice((20, 8, 170, 112), 180, 360, fill=(245, 194, 35, 255))
+    draw.rectangle((8, 65, 182, 82), fill=(245, 194, 35, 255))
+    image.save(path, format="PNG")
+
+
+def _make_vest(path: Path) -> None:
+    image = Image.new("RGBA", (180, 220), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.polygon(((30, 15), (72, 5), (90, 62), (108, 5), (150, 15), (168, 212), (12, 212)), fill=(225, 242, 40, 255))
+    draw.rectangle((18, 88, 162, 108), fill=(200, 210, 215, 255))
+    image.save(path, format="PNG")
+
+
+def _make_boots(path: Path) -> None:
+    image = Image.new("RGBA", (190, 150), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((22, 10, 78, 112), radius=10, fill=(55, 45, 35, 255))
+    draw.rounded_rectangle((98, 10, 154, 112), radius=10, fill=(55, 45, 35, 255))
+    draw.rounded_rectangle((10, 92, 88, 138), radius=12, fill=(42, 36, 30, 255))
+    draw.rounded_rectangle((86, 92, 176, 138), radius=12, fill=(42, 36, 30, 255))
     image.save(path, format="PNG")
 
 
@@ -93,12 +121,20 @@ async def main() -> None:
         settings.ai_engine = "mock"
         settings.storage_backend = "local"
         human_path = root / "synthetic-human.png"
+        alternate_human_path = root / "synthetic-human-alternate.png"
+        helmet_path = root / "synthetic-helmet.png"
+        vest_path = root / "synthetic-vest.png"
         goggles_path = root / "synthetic-goggles.png"
         gloves_path = root / "synthetic-gloves.png"
+        boots_path = root / "synthetic-boots.png"
         opaque_goggles_path = root / "synthetic-opaque-goggles.png"
         _make_human(human_path)
+        _make_human(alternate_human_path, (175, 205, 185))
+        _make_helmet(helmet_path)
+        _make_vest(vest_path)
         _make_goggles(goggles_path)
         _make_gloves(gloves_path)
+        _make_boots(boots_path)
         _make_goggles(opaque_goggles_path, transparent=False)
         captured: dict[str, dict[str, object]] = {}
 
@@ -134,21 +170,37 @@ async def main() -> None:
         routes.generate_ai_image = fake_generate
         try:
             cases = (
-                ("goggles", "industrial safety goggles", "eye protection", goggles_path, 0.31, 0.30),
-                ("gloves", "protective work gloves", "hand protection", gloves_path, 0.57, 0.36),
+                ("helmet", "industrial safety helmet", "head protection", helmet_path, 0.0, 0.30, True),
+                ("vest", "reflective safety vest", "body protection", vest_path, 0.28, 0.50, True),
+                ("gloves", "protective work gloves", "hand protection", gloves_path, 0.57, 0.36, True),
+                ("boots", "protective work boots", "foot protection", boots_path, 0.80, 0.40, True),
+                ("goggles", "industrial safety goggles", "eye protection", goggles_path, 0.31, 0.30, False),
             )
-            for name, product, category, ppe_path, expected_y, expected_width in cases:
-                record, payload = await execute(_task(f"human-wearing-{name}", product, category, human_path, ppe_path))
+            for name, product, category, ppe_path, expected_y, expected_width, official in cases:
+                extra = (
+                    {"ppe_category": name, "gender": "male", "view": "front", "framing": "half_body"}
+                    if official
+                    else None
+                )
+                record, payload = await execute(
+                    _task(f"human-wearing-{name}", product, category, human_path, ppe_path, extra)
+                )
                 assert record["status"] == TaskStatus.succeeded
                 assert payload["human_wearing_used"] is True
                 validation = payload["input_asset_validation"]
                 assert validation["ppe_reference"]["has_alpha"] is True
                 composite = payload["printed_design"]
                 assert composite["human_wearing_placement_profile"] == name
+                assert composite["ppe_category"] == name
                 assert composite["position_y_ratio"] == expected_y
                 assert composite["ppe_width_ratio"] == expected_width
                 composite_path = Path(composite["path"])
                 assert composite_path.exists()
+                visual_output = os.environ.get("PPE_VISUAL_OUTPUT_DIR")
+                if visual_output and official:
+                    target_dir = Path(visual_output)
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(composite_path, target_dir / f"human_wearing_{name}.png")
                 assert captured[f"human-wearing-{name}"]["generation_mode"] == "human_wearing"
                 assert captured[f"human-wearing-{name}"]["product_image_path"] == str(composite_path)
                 prepared_path = root / f"prepared-{name}.png"
@@ -158,6 +210,28 @@ async def main() -> None:
                 assert composite_metadata["human_wearing_placement_profile"] == name
                 output_metadata = json.loads(Path(record["metadata_path"]).read_text(encoding="utf-8"))
                 assert output_metadata["printed_design"]["human_wearing_placement_profile"] == name
+                assert output_metadata["ppe_category"] == name
+                if official:
+                    assert output_metadata["gender"] == "male"
+                    assert output_metadata["view"] == "front"
+                    assert output_metadata["framing"] == "half_body"
+
+            reference_record, reference_payload = await execute(
+                _task(
+                    "human-wearing-reference-effect",
+                    "industrial safety helmet",
+                    "head protection",
+                    alternate_human_path,
+                    helmet_path,
+                    {"ppe_category": "helmet", "gender": "female", "view": "slight_side", "framing": "full_body"},
+                )
+            )
+            assert reference_record["status"] == TaskStatus.succeeded
+            assert Path(reference_payload["printed_design"]["human_reference_path"]) == alternate_human_path
+            assert captured["human-wearing-reference-effect"]["product_image_path"] == reference_payload["printed_design"]["path"]
+            assert Path(reference_record["output_path"]).read_bytes() != Path(
+                load_task("human-wearing-helmet").output_path
+            ).read_bytes()
 
             manual_record, manual_payload = await execute(
                 _task(

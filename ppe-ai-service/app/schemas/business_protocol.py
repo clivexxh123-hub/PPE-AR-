@@ -17,6 +17,7 @@ _FORMAL_IMAGE_SOURCE_FIELDS = {
     "logo_image",
     "base_image",
     "scene_image",
+    "scene_reference",
     "human_reference",
     "ppe_reference",
 }

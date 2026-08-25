@@ -60,29 +60,32 @@ def _assert_template_selection_and_overrides() -> None:
     assert human_prompt.template_id == HUMAN_WEARING_TEMPLATE_ID
 
     compositions = {
-        ("front", "half_body"),
-        ("front", "full_body"),
-        ("slight_side", "half_body"),
-        ("slight_side", "full_body"),
+        (view, framing, gender)
+        for view in ("front", "slight_side")
+        for framing in ("half_body", "full_body")
+        for gender in ("male", "female")
     }
     prompts = {
-        pair: build_managed_prompt(
+        combination: build_managed_prompt(
             "安全帽",
             "头部防护",
             "site",
             "photo",
             generation_mode="human_wearing",
-            view=pair[0],
-            framing=pair[1],
+            view=combination[0],
+            framing=combination[1],
+            gender=combination[2],
         )
-        for pair in compositions
+        for combination in compositions
     }
-    assert len({result.prompt for result in prompts.values()}) == 4
-    for (view, framing), result in prompts.items():
+    assert len({result.prompt for result in prompts.values()}) == 8
+    for (view, framing, gender), result in prompts.items():
         assert result.template_id == HUMAN_WEARING_TEMPLATE_ID
         assert result.metadata()["view"] == view
         assert result.metadata()["framing"] == framing
+        assert result.metadata()["gender"] == gender
         assert "Composition:" in result.prompt
+        assert "Person:" in result.prompt
 
     try:
         build_managed_prompt("helmet", "PPE", "site", "photo", view="front")
@@ -165,15 +168,15 @@ def _assert_generation_metadata() -> None:
             assert local_record is not None
             assert local_record["prompt_template_id"] == SCENE_MARKETING_TEMPLATE_ID
 
-            for view, framing in (
-                ("front", "half_body"),
-                ("front", "full_body"),
-                ("slight_side", "half_body"),
-                ("slight_side", "full_body"),
+            for view, framing, gender in (
+                (view, framing, gender)
+                for view in ("front", "slight_side")
+                for framing in ("half_body", "full_body")
+                for gender in ("male", "female")
             ):
                 composition_response = client.post(
                     "/ai/generate",
-                    json={**common_parameters, "view": view, "framing": framing},
+                    json={**common_parameters, "view": view, "framing": framing, "gender": gender},
                 )
                 composition_response.raise_for_status()
                 composition_result = composition_response.json()
@@ -183,7 +186,9 @@ def _assert_generation_metadata() -> None:
                 assert composition_metadata["prompt_template_id"] == PRODUCT_DISPLAY_TEMPLATE_ID
                 assert composition_metadata["view"] == view
                 assert composition_metadata["framing"] == framing
+                assert composition_metadata["gender"] == gender
                 assert "Composition:" in composition_metadata["final_prompt_summary"]
+                assert "Person:" in composition_metadata["final_prompt_summary"]
 
             legacy_response = client.post("/ai/generate", json=common_parameters)
             legacy_response.raise_for_status()
@@ -195,6 +200,7 @@ def _assert_generation_metadata() -> None:
             assert legacy_metadata["prompt_template_id"] == PRODUCT_DISPLAY_TEMPLATE_ID
             assert legacy_metadata["prompt_template_selection"] == "generation_mode_default"
             assert "view" not in legacy_metadata and "framing" not in legacy_metadata
+            assert "gender" not in legacy_metadata
 
             business_response = client.post(
                 "/ai/tasks",
@@ -210,6 +216,7 @@ def _assert_generation_metadata() -> None:
                         "template_id": SCENE_MARKETING_TEMPLATE_ID,
                         "view": "slight_side",
                         "framing": "full_body",
+                        "gender": "female",
                     },
                 },
             )
@@ -222,6 +229,7 @@ def _assert_generation_metadata() -> None:
             assert business_metadata["final_prompt_summary"]
             assert business_metadata["view"] == "slight_side"
             assert business_metadata["framing"] == "full_body"
+            assert business_metadata["gender"] == "female"
             business_record = load_task_payload("prompt-management-business")
             assert business_record is not None
             assert business_record["prompt_template_id"] == SCENE_MARKETING_TEMPLATE_ID

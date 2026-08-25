@@ -14,9 +14,48 @@ _DEFAULT_PLACEMENT_PROFILE = {
     "opacity": 1.0,
 }
 _CATEGORY_PLACEMENT_PROFILES = (
+    ("helmet", ("安全帽", "头盔", "helmet", "hard hat"), {"position_x_ratio": 0.5, "position_y_ratio": 0.0, "ppe_width_ratio": 0.30}),
+    ("vest", ("马甲", "背心", "vest", "waistcoat"), {"position_x_ratio": 0.5, "position_y_ratio": 0.28, "ppe_width_ratio": 0.50}),
     ("goggles", ("护目镜", "goggle", "eyewear", "safety glasses"), {"position_x_ratio": 0.5, "position_y_ratio": 0.31, "ppe_width_ratio": 0.30}),
     ("gloves", ("手套", "glove"), {"position_x_ratio": 0.5, "position_y_ratio": 0.57, "ppe_width_ratio": 0.36}),
+    ("boots", ("靴子", "安全鞋", "boot", "safety shoe"), {"position_x_ratio": 0.5, "position_y_ratio": 0.80, "ppe_width_ratio": 0.40}),
 )
+_PPE_CATEGORY_ALIASES = {
+    "helmet": "helmet",
+    "头盔": "helmet",
+    "安全帽": "helmet",
+    "vest": "vest",
+    "马甲": "vest",
+    "背心": "vest",
+    "gloves": "gloves",
+    "glove": "gloves",
+    "手套": "gloves",
+    "boots": "boots",
+    "boot": "boots",
+    "靴子": "boots",
+    "安全鞋": "boots",
+}
+
+
+def resolve_ppe_category(
+    product_name: str,
+    product_category: str,
+    requested_category: str | None = None,
+) -> str:
+    """Resolve the local PPE category without coupling it to fixture paths or a database."""
+    if requested_category is not None and requested_category.strip():
+        normalized = requested_category.strip().lower()
+        resolved = _PPE_CATEGORY_ALIASES.get(normalized)
+        if resolved is None:
+            supported = ", ".join(("helmet", "vest", "gloves", "boots"))
+            raise ValueError(f"ppe_category 仅支持：{supported}。")
+        return resolved
+
+    source = f"{product_name} {product_category}".lower()
+    for candidate_name, keywords, _ in _CATEGORY_PLACEMENT_PROFILES:
+        if any(keyword in source for keyword in keywords):
+            return candidate_name
+    return "unknown"
 
 
 def resolve_human_wearing_placement(
@@ -26,10 +65,15 @@ def resolve_human_wearing_placement(
 ) -> dict[str, Any]:
     """Resolve small category defaults while preserving explicit task overrides."""
     source = f"{product_name} {product_category}".lower()
-    profile_name = "default"
+    ppe_category = resolve_ppe_category(
+        product_name,
+        product_category,
+        str(parameters["ppe_category"]) if parameters.get("ppe_category") is not None else None,
+    )
+    profile_name = ppe_category if ppe_category != "unknown" else "default"
     resolved: dict[str, float] = dict(_DEFAULT_PLACEMENT_PROFILE)
     for candidate_name, keywords, profile in _CATEGORY_PLACEMENT_PROFILES:
-        if any(keyword in source for keyword in keywords):
+        if candidate_name == ppe_category or (ppe_category == "unknown" and any(keyword in source for keyword in keywords)):
             profile_name = candidate_name
             resolved.update(profile)
             break
@@ -48,6 +92,7 @@ def resolve_human_wearing_placement(
 
     return {
         **resolved,
+        "ppe_category": ppe_category,
         "placement_profile": profile_name,
         "manual_override_fields": manual_overrides,
     }
