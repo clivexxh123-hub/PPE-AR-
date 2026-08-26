@@ -302,6 +302,7 @@ def _placement_summary(metadata_path: Path) -> dict[str, Any]:
             "placement_mode",
             "placement_profile",
             "printable_region_bounds",
+            "product_bounds",
             "final_x_ratio",
             "final_y_ratio",
             "final_width_ratio",
@@ -311,7 +312,7 @@ def _placement_summary(metadata_path: Path) -> dict[str, Any]:
 
 
 def _helmet_view_placement_defaults(parameters: dict[str, Any]) -> dict[str, str]:
-    """Map existing optional view hints to local helmet print-center profiles.
+    """Map optional semantic hints to local product-relative print profiles.
 
     View is intentionally read from loose local parameters rather than added to
     the frozen task contract.  A template or explicit manual placement is
@@ -322,8 +323,22 @@ def _helmet_view_placement_defaults(parameters: dict[str, Any]) -> dict[str, str
         "正面": "front",
         "back": "back",
         "背面": "back",
+        "left": "left",
+        "左侧": "left",
+        "right": "right",
+        "右侧": "right",
+        "front_left_chest": "front_left_chest",
+        "front-left-chest": "front_left_chest",
+        "front_right_chest": "front_right_chest",
+        "front-right-chest": "front_right_chest",
+        "back_upper": "back_upper",
+        "back-upper": "back_upper",
+        "back_middle": "back_middle",
+        "back-middle": "back_middle",
+        "back_lower": "back_lower",
+        "back-lower": "back_lower",
     }
-    for key in ("product_view", "view", "view_type", "viewType"):
+    for key in ("print_region", "placement_region", "product_view", "view", "view_type", "viewType"):
         value = parameters.get(key)
         if value is None:
             continue
@@ -347,6 +362,7 @@ def _logo_template_metadata(resolution: LogoPlacementResolution, metadata_path: 
         "placement_mode",
         "placement_profile",
         "printable_region_bounds",
+        "product_bounds",
         "final_x_ratio",
         "final_y_ratio",
         "final_width_ratio",
@@ -465,6 +481,10 @@ async def _prepare_human_wearing_input(
     _append_output_metadata(
         metadata_path,
         {
+            "ppe_category": placement["ppe_category"],
+            "gender": generate_payload.gender,
+            "view": generate_payload.view,
+            "framing": generate_payload.framing,
             "human_wearing_placement_profile": placement["placement_profile"],
             "human_wearing_manual_override_fields": placement["manual_override_fields"],
         },
@@ -477,6 +497,10 @@ async def _prepare_human_wearing_input(
         "metadata_path": str(metadata_path),
         "human_reference_path": str(human_path),
         "ppe_reference_path": str(ppe_path),
+        "ppe_category": placement["ppe_category"],
+        "gender": generate_payload.gender,
+        "view": generate_payload.view,
+        "framing": generate_payload.framing,
         "position_x_ratio": placement["position_x_ratio"],
         "position_y_ratio": placement["position_y_ratio"],
         "ppe_width_ratio": placement["ppe_width_ratio"],
@@ -511,6 +535,30 @@ def _prepare_scene_generation_foreground(
     return product_path, validation
 
 
+async def _prepare_scene_generation_reference(
+    task: GenerationTaskInput,
+    input_asset_validation: dict[str, Any] | None,
+) -> tuple[Path | None, dict[str, Any]]:
+    """Validate an optional local scene reference without freezing a formal asset role."""
+    validation = dict(input_asset_validation or {})
+    parameters = _parameters_with_input_assets(task)
+    scene_source = _image_source_from_parameter(
+        parameters.get("scene_reference") or parameters.get("scene_image")
+    )
+    if scene_source is None:
+        return None, validation
+    try:
+        validation["scene_reference"] = await validate_image_source(scene_source, "scene_reference")
+    except ImageAssetValidationError as exc:
+        combined = dict(validation)
+        combined["scene_reference"] = exc.validation_result
+        raise ImageAssetValidationError(str(exc), combined) from exc
+    scene_path = _validated_image_path(validation, "scene_reference")
+    if scene_path is None:
+        raise ValueError("scene_reference 校验失败。")
+    return scene_path, validation
+
+
 def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateRequest:
     prompt_overrides = parameters.get("prompt_overrides")
     if not isinstance(prompt_overrides, dict):
@@ -529,6 +577,7 @@ def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateReque
         style=str(parameters.get("style", "")).strip(),
         view=str(parameters["view"]).strip() if parameters.get("view") is not None else None,
         framing=str(parameters["framing"]).strip() if parameters.get("framing") is not None else None,
+        gender=str(parameters["gender"]).strip() if parameters.get("gender") is not None else None,
         size=str(parameters.get("size", "512x512")).strip(),
         prompt_overrides=prompt_overrides,
         output_format=str(parameters.get("output_format", "png")).strip(),
@@ -592,6 +641,10 @@ def _business_extra(
     parameters = _parameters_with_input_assets(task)
     product_image_url = _image_url_from_parameter(parameters, "product_image")
     logo_image_url = _image_url_from_parameter(parameters, "logo_image")
+    scene_reference_url = (
+        _image_url_from_parameter(parameters, "scene_reference")
+        or _image_url_from_parameter(parameters, "scene_image")
+    )
     generation_mode = str(task.parameters.get("generation_mode", "")).strip() or None
     human_wearing_used = bool(printed_design and printed_design.get("human_wearing_used"))
     scene_generation_used = generation_mode == "scene_generation"
@@ -602,9 +655,18 @@ def _business_extra(
     )
     background_generated = bool(printed_design and printed_design.get("background_generated"))
     product_composited = bool(printed_design and printed_design.get("product_composited"))
+    scene_reference_used = bool(printed_design and printed_design.get("scene_reference_used"))
+    ppe_category = (
+        str(printed_design.get("ppe_category"))
+        if printed_design and printed_design.get("ppe_category")
+        else None
+    )
     product_reference_used = _validated_product_image_path(input_asset_validation) is not None
     denoise = actual_denoise
-    if denoise is None and scene_generation_used and scene_generation_strategy != "generated_background_composite":
+    if denoise is None and scene_generation_used and scene_generation_strategy not in {
+        "generated_background_composite",
+        "reference_background_composite",
+    }:
         denoise = settings.comfyui_scene_generation_denoise
     payload: dict[str, Any] = {
         "business_protocol": {
@@ -625,6 +687,11 @@ def _business_extra(
             "scene_generation_strategy": scene_generation_strategy,
             "background_generated": background_generated,
             "product_composited": product_composited,
+            "scene_reference_used": scene_reference_used,
+            "ppe_category": ppe_category,
+            "gender": str(task.parameters.get("gender", "")).strip() or None,
+            "view": str(task.parameters.get("view", "")).strip() or None,
+            "framing": str(task.parameters.get("framing", "")).strip() or None,
             "scene": str(task.parameters.get("scene", "")).strip() or None,
             "style": str(task.parameters.get("style", "")).strip() or None,
             "product_reference_used": product_reference_used,
@@ -633,6 +700,7 @@ def _business_extra(
             "image_urls": {
                 "product_image": redact_url(product_image_url),
                 "logo_image": redact_url(logo_image_url),
+                "scene_reference": redact_url(scene_reference_url),
             },
             "output": {
                 "assetKey": task.output.assetKey,
@@ -663,6 +731,11 @@ def _business_extra(
     payload["scene_generation_strategy"] = scene_generation_strategy
     payload["background_generated"] = background_generated
     payload["product_composited"] = product_composited
+    payload["scene_reference_used"] = scene_reference_used
+    payload["ppe_category"] = ppe_category
+    payload["gender"] = str(task.parameters.get("gender", "")).strip() or None
+    payload["view"] = str(task.parameters.get("view", "")).strip() or None
+    payload["framing"] = str(task.parameters.get("framing", "")).strip() or None
     payload["product_reference_used"] = product_reference_used
     payload["denoise"] = denoise
     if printed_design is not None:
@@ -903,6 +976,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         "printed_design_used": False,
         "reason": "not_processed",
     }
+    scene_reference_path: Path | None = None
     record = load_task(task.jobId)
     if record is None:
         return
@@ -923,12 +997,22 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             )
         elif generation_mode == "scene_generation":
             generation_input_path, input_asset_validation = _prepare_scene_generation_foreground(input_asset_validation)
+            scene_reference_path, input_asset_validation = await _prepare_scene_generation_reference(
+                task, input_asset_validation
+            )
+            scene_strategy = (
+                "reference_background_composite"
+                if scene_reference_path is not None
+                else "generated_background_composite"
+            )
             printed_design = {
                 "printed_design_used": False,
-                "scene_generation_strategy": "generated_background_composite",
+                "scene_generation_strategy": scene_strategy,
                 "background_generated": False,
                 "product_composited": False,
                 "ppe_foreground_path": str(generation_input_path),
+                "scene_reference_used": scene_reference_path is not None,
+                "scene_reference_path": str(scene_reference_path) if scene_reference_path is not None else None,
             }
         else:
             generation_input_path, printed_design = _prepare_generation_input(task, input_asset_validation)
@@ -951,6 +1035,7 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             generation_mode=generation_mode,
             view=generate_payload.view,
             framing=generate_payload.framing,
+            gender=generate_payload.gender,
         )
         prompt = prompt_result.prompt
         generation_kwargs: dict[str, Any] = {}
@@ -960,25 +1045,36 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         if requested_denoise is not None:
             generation_kwargs["denoise"] = requested_denoise
         if generation_mode == "scene_generation":
-            background_prompt = build_scene_background_prompt(
-                scene=generate_payload.scene,
-                style=generate_payload.style,
-                overrides=generate_payload.prompt_overrides,
-            )
-            prompt_result = PromptBuildResult(
-                template_id=prompt_result.template_id,
-                selection_rule=prompt_result.selection_rule,
-                prompt=background_prompt,
-                view=prompt_result.view,
-                framing=prompt_result.framing,
-            )
-            background_path, background_metadata_path, background_engine = await generate_ai_image(
-                f"{task.jobId}-scene-background",
-                background_prompt,
-                generate_payload.size,
-                generate_payload.output_format,
-                generation_mode="scene_generation",
-            )
+            if scene_reference_path is None:
+                background_prompt = build_scene_background_prompt(
+                    scene=generate_payload.scene,
+                    style=generate_payload.style,
+                    overrides=generate_payload.prompt_overrides,
+                )
+                prompt_result = PromptBuildResult(
+                    template_id=prompt_result.template_id,
+                    selection_rule=prompt_result.selection_rule,
+                    prompt=background_prompt,
+                    view=prompt_result.view,
+                    framing=prompt_result.framing,
+                    gender=prompt_result.gender,
+                )
+                background_path, background_metadata_path, background_engine = await generate_ai_image(
+                    f"{task.jobId}-scene-background",
+                    background_prompt,
+                    generate_payload.size,
+                    generate_payload.output_format,
+                    generation_mode="scene_generation",
+                )
+                scene_strategy = "generated_background_composite"
+                background_generated = True
+                engine = f"{background_engine}+pillow"
+            else:
+                background_path = scene_reference_path
+                background_metadata_path = None
+                scene_strategy = "reference_background_composite"
+                background_generated = False
+                engine = "pillow-scene-reference-composite"
             image_path, metadata_path = render_scene_marketing_image(
                 task.jobId,
                 background_path,
@@ -987,14 +1083,23 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 product_width_ratio=float(task.parameters.get("scene_product_width_ratio", 0.55)),
                 position_x_ratio=float(task.parameters.get("position_x_ratio", 0.5)),
                 position_y_ratio=float(task.parameters.get("position_y_ratio", 0.58)),
+                strategy=scene_strategy,
+                background_generated=background_generated,
+                scene_reference_used=scene_reference_path is not None,
             )
-            engine = f"{background_engine}+pillow"
             printed_design.update(
                 {
-                    "background_generated": True,
+                    "scene_generation_strategy": scene_strategy,
+                    "background_generated": background_generated,
                     "product_composited": True,
                     "background_path": str(background_path),
-                    "background_metadata_path": str(background_metadata_path),
+                    "background_metadata_path": (
+                        str(background_metadata_path) if background_metadata_path is not None else None
+                    ),
+                    "scene_reference_used": scene_reference_path is not None,
+                    "scene_reference_path": (
+                        str(scene_reference_path) if scene_reference_path is not None else None
+                    ),
                     "path": str(image_path),
                     "metadata_path": str(metadata_path),
                 }
@@ -1080,6 +1185,7 @@ async def _run_generate_task(task_id: str, payload: GenerateRequest) -> None:
             template_id=payload.template_id,
             view=payload.view,
             framing=payload.framing,
+            gender=payload.gender,
         )
         image_path, metadata_path, engine = await generate_ai_image(
             task_id,

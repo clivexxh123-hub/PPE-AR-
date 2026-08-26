@@ -36,6 +36,8 @@ PPE_KEYWORDS = {
     "手套": "protective work gloves, safety gloves, industrial gloves",
     "护目镜": "safety goggles, protective eyewear, clear industrial goggles",
     "反光背心": "high visibility safety vest, reflective vest, industrial safety vest",
+    "马甲": "high visibility safety vest, reflective vest, industrial safety vest",
+    "靴子": "protective work boots, industrial safety boots, steel toe boots",
 }
 
 _TEMPLATE_IDS_BY_MODE = {
@@ -51,6 +53,10 @@ _COMPOSITION_INSTRUCTIONS = {
     ("slight_side", "half_body"): "Composition: person in a slight side view, half-body framing from the waist up.",
     ("slight_side", "full_body"): "Composition: person in a slight side view, full-body framing with the complete figure visible.",
 }
+_GENDER_INSTRUCTIONS = {
+    "male": "Person: adult male PPE model.",
+    "female": "Person: adult female PPE model.",
+}
 
 
 @dataclass(frozen=True)
@@ -60,6 +66,7 @@ class PromptBuildResult:
     prompt: str
     view: str | None = None
     framing: str | None = None
+    gender: str | None = None
 
     @property
     def summary(self) -> str:
@@ -76,6 +83,8 @@ class PromptBuildResult:
             metadata["view"] = self.view
         if self.framing is not None:
             metadata["framing"] = self.framing
+        if self.gender is not None:
+            metadata["gender"] = self.gender
         return metadata
 
 
@@ -138,6 +147,17 @@ def _composition_instruction(view: str | None, framing: str | None) -> tuple[str
     return normalized_view, normalized_framing, instruction
 
 
+def _gender_instruction(gender: str | None) -> tuple[str | None, str]:
+    if gender is None or not gender.strip():
+        return None, ""
+    normalized_gender = gender.strip().lower()
+    instruction = _GENDER_INSTRUCTIONS.get(normalized_gender)
+    if instruction is None:
+        supported = ", ".join(sorted(_GENDER_INSTRUCTIONS))
+        raise ValueError(f"gender 仅支持：{supported}。")
+    return normalized_gender, instruction
+
+
 def build_managed_prompt(
     product_name: str,
     product_category: str,
@@ -149,9 +169,11 @@ def build_managed_prompt(
     generation_mode: str | None = None,
     view: str | None = None,
     framing: str | None = None,
+    gender: str | None = None,
 ) -> PromptBuildResult:
     selected_id, selection_rule = _select_template_id(template_id, generation_mode)
     selected_view, selected_framing, composition = _composition_instruction(view, framing)
+    selected_gender, gender_instruction = _gender_instruction(gender)
     values = {
         "product_name": product_name,
         "product_category": product_category,
@@ -167,16 +189,18 @@ def build_managed_prompt(
     extra = values["extra_instructions"]
     if extra and "${extra_instructions}" not in template_text:
         prompt = f"{prompt}\n{extra}"
-    if composition:
+    composition_prefix = "\n".join(item for item in (gender_instruction, composition) if item)
+    if composition_prefix:
         # Keep the composition at the beginning so the persisted prompt summary
         # remains distinguishable even when a long template is truncated.
-        prompt = f"{composition}\n{prompt}"
+        prompt = f"{composition_prefix}\n{prompt}"
     return PromptBuildResult(
         template_id=selected_id,
         selection_rule=selection_rule,
         prompt=prompt,
         view=selected_view,
         framing=selected_framing,
+        gender=selected_gender,
     )
 
 
