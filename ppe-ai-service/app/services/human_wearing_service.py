@@ -145,6 +145,15 @@ def render_human_wearing_design(
     except OSError as exc:
         raise ValueError(f"human_wearing image could not be read: {exc}") from exc
 
+    # PPE source exports commonly retain generous transparent canvas margins.
+    # Width ratios describe the wearable product, not that unused canvas, so
+    # normalize to the visible alpha foreground before applying the existing
+    # category placement defaults.  This matches scene_generation behavior.
+    foreground_bounds = ppe.getchannel("A").getbbox()
+    if foreground_bounds is None:
+        raise ValueError("human_wearing PPE foreground is fully transparent.")
+    ppe = ppe.crop(foreground_bounds)
+
     target_width = max(1, min(human.width, round(human.width * ppe_width_ratio)))
     target_height = max(1, round(ppe.height * target_width / ppe.width))
     ppe = ppe.resize((target_width, target_height), Image.Resampling.LANCZOS)
@@ -167,6 +176,12 @@ def render_human_wearing_design(
                 "generation_mode": "human_wearing",
                 "human_reference_path": str(human_path),
                 "ppe_reference_path": str(ppe_path),
+                "ppe_foreground_bounds": {
+                    "left": foreground_bounds[0],
+                    "top": foreground_bounds[1],
+                    "right": foreground_bounds[2],
+                    "bottom": foreground_bounds[3],
+                },
                 "output_path": str(image_path),
                 "width": human.width,
                 "height": human.height,

@@ -24,6 +24,7 @@ from app.core.config import settings  # noqa: E402
 from app.schemas.business_protocol import GenerationTaskInput  # noqa: E402
 from app.schemas.tasks import TaskStatus  # noqa: E402
 from app.services.comfyui_engine import prepare_img2img_input  # noqa: E402
+from app.services.human_wearing_service import render_human_wearing_design  # noqa: E402
 from app.services.task_store import create_task, load_task, load_task_payload  # noqa: E402
 
 
@@ -82,6 +83,13 @@ def _make_boots(path: Path) -> None:
     image.save(path, format="PNG")
 
 
+def _make_padded_helmet(path: Path) -> None:
+    """Mimic a real product export whose visible PPE occupies little canvas."""
+    image = Image.new("RGBA", (600, 400), (0, 0, 0, 0))
+    ImageDraw.Draw(image).rounded_rectangle((250, 150, 350, 220), radius=12, fill=(245, 194, 35, 255))
+    image.save(path, format="PNG")
+
+
 def _task(job_id: str, product_name: str, category: str, human_path: Path, ppe_path: Path, extra: dict | None = None) -> GenerationTaskInput:
     return GenerationTaskInput(
         jobId=job_id,
@@ -128,6 +136,7 @@ async def main() -> None:
         gloves_path = root / "synthetic-gloves.png"
         boots_path = root / "synthetic-boots.png"
         opaque_goggles_path = root / "synthetic-opaque-goggles.png"
+        padded_helmet_path = root / "synthetic-padded-helmet.png"
         _make_human(human_path)
         _make_human(alternate_human_path, (175, 205, 185))
         _make_helmet(helmet_path)
@@ -136,6 +145,28 @@ async def main() -> None:
         _make_gloves(gloves_path)
         _make_boots(boots_path)
         _make_goggles(opaque_goggles_path, transparent=False)
+        _make_padded_helmet(padded_helmet_path)
+
+        # Width ratios must apply to the visible PPE, rather than transparent
+        # export margins.  The selected color is unique to this fixture.
+        padded_image, padded_metadata = render_human_wearing_design(
+            "human-wearing-alpha-crop",
+            human_path,
+            padded_helmet_path,
+            size="512x512",
+            ppe_width_ratio=0.30,
+        )
+        with Image.open(padded_image) as rendered:
+            rgb = rendered.convert("RGB")
+            mask = Image.new("1", rgb.size)
+            mask.putdata(
+                [255 if red > 220 and 150 < green < 220 and blue < 90 else 0 for red, green, blue in rgb.getdata()]
+            )
+        visible_bounds = mask.getbbox()
+        assert visible_bounds is not None
+        assert visible_bounds[2] - visible_bounds[0] >= 145
+        alpha_metadata = json.loads(padded_metadata.read_text(encoding="utf-8"))
+        assert alpha_metadata["ppe_foreground_bounds"] == {"left": 250, "top": 150, "right": 351, "bottom": 221}
         captured: dict[str, dict[str, object]] = {}
 
         async def fake_generate(
@@ -208,6 +239,9 @@ async def main() -> None:
                 assert prepared_path.exists() and details["processed_width"] == 512 and details["processed_height"] == 512
                 composite_metadata = json.loads(Path(composite["metadata_path"]).read_text(encoding="utf-8"))
                 assert composite_metadata["human_wearing_placement_profile"] == name
+                foreground = composite_metadata["ppe_foreground_bounds"]
+                assert foreground["left"] < foreground["right"]
+                assert foreground["top"] < foreground["bottom"]
                 output_metadata = json.loads(Path(record["metadata_path"]).read_text(encoding="utf-8"))
                 assert output_metadata["printed_design"]["human_wearing_placement_profile"] == name
                 assert output_metadata["ppe_category"] == name
