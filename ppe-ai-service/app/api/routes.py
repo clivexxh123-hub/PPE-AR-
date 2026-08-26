@@ -476,7 +476,9 @@ async def _prepare_human_wearing_input(
         position_x_ratio=placement["position_x_ratio"],
         position_y_ratio=placement["position_y_ratio"],
         ppe_width_ratio=placement["ppe_width_ratio"],
+        human_top_padding_ratio=placement["human_top_padding_ratio"],
         opacity=placement["opacity"],
+        ppe_category=placement["ppe_category"],
     )
     _append_output_metadata(
         metadata_path,
@@ -504,6 +506,7 @@ async def _prepare_human_wearing_input(
         "position_x_ratio": placement["position_x_ratio"],
         "position_y_ratio": placement["position_y_ratio"],
         "ppe_width_ratio": placement["ppe_width_ratio"],
+        "human_top_padding_ratio": placement["human_top_padding_ratio"],
         "opacity": placement["opacity"],
         "human_wearing_placement_profile": placement["placement_profile"],
         "human_wearing_manual_override_fields": placement["manual_override_fields"],

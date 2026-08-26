@@ -201,7 +201,7 @@ async def main() -> None:
         routes.generate_ai_image = fake_generate
         try:
             cases = (
-                ("helmet", "industrial safety helmet", "head protection", helmet_path, 0.0, 0.30, True),
+                ("helmet", "industrial safety helmet", "head protection", helmet_path, 0.10, 0.22, True),
                 ("vest", "reflective safety vest", "body protection", vest_path, 0.28, 0.50, True),
                 ("gloves", "protective work gloves", "hand protection", gloves_path, 0.57, 0.36, True),
                 ("boots", "protective work boots", "foot protection", boots_path, 0.80, 0.40, True),
@@ -239,6 +239,8 @@ async def main() -> None:
                 assert prepared_path.exists() and details["processed_width"] == 512 and details["processed_height"] == 512
                 composite_metadata = json.loads(Path(composite["metadata_path"]).read_text(encoding="utf-8"))
                 assert composite_metadata["human_wearing_placement_profile"] == name
+                if name == "helmet":
+                    assert composite_metadata["human_top_padding_ratio"] == 0.12
                 foreground = composite_metadata["ppe_foreground_bounds"]
                 assert foreground["left"] < foreground["right"]
                 assert foreground["top"] < foreground["bottom"]

@@ -25,10 +25,51 @@ No text, labels, watermark, collage, duplicate products, or people.
 ${extra_instructions}"""
 
 HUMAN_WEARING_TEMPLATE = """Realistic commercial PPE marketing photo of a person wearing one ${product_name}.
-PPE category: ${product_category}. Correct product position on the body; preserve the PPE color, silhouette, and visible structure.
+PPE category: ${product_category}. Product interpretation: ${product_keywords}. Correct product position on the body; preserve the PPE color, silhouette, and visible structure.
 Scene: ${scene}. Visual style: ${style}.
-Natural human pose, realistic lighting, and sharp product details.
+${wearing_instruction} Natural human pose, realistic lighting, and sharp product details.
 ${extra_instructions}"""
+
+# Masked refinement prompts.  These describe the *contact* the sampler has to
+# invent inside the band, not the product - the product pixels are protected by
+# the mask, so asking for a helmet here only invites a second one.
+PPE_BLEND_PROMPTS = {
+    "helmet": (
+        "photorealistic close detail of a worker naturally wearing the provided industrial safety helmet, "
+        "helmet seated firmly on the crown of the head, realistic contact between the helmet brim and the forehead, "
+        "hair compressed under the helmet rim, natural occlusion where hair and ears meet the shell, "
+        "soft realistic contact shadow cast by the brim onto the forehead, "
+        "consistent studio lighting, sharp photographic detail, "
+        "preserve the original helmet color, shape and design"
+    ),
+    "vest": (
+        "photorealistic detail of a worker naturally wearing the provided reflective safety vest, "
+        "vest fitted over the shoulders and torso, fabric draping over the shoulder line and following the body, "
+        "realistic folds and creases where the vest meets the arms and the chest, "
+        "natural arm and armpit occlusion over the vest edge, soft contact shadows along the shoulders and sides, "
+        "consistent studio lighting, sharp photographic detail, "
+        "preserve the original vest color, reflective strips and structure"
+    ),
+}
+PPE_BLEND_NEGATIVE_PROMPT = (
+    "floating PPE, floating helmet, floating garment, detached garment, pasted object, flat overlay, "
+    "sticker, cut-out edge, hard outline, duplicate helmet, double helmet, second hat, duplicate vest, "
+    "extra straps, malformed PPE, deformed product, changed product color, distorted face, extra limbs, "
+    "extra ears, text, typography, watermark, logo artifacts, collage, blurry, low quality"
+)
+
+
+def build_ppe_blend_prompt(ppe_category: str, style: str | None = None) -> str:
+    """Prompt for the masked contact-band refinement pass."""
+    normalized = (ppe_category or "").strip().lower()
+    if normalized not in PPE_BLEND_PROMPTS:
+        supported = ", ".join(sorted(PPE_BLEND_PROMPTS))
+        raise ValueError(f"ppe_blend prompt 仅支持：{supported}。")
+    prompt = PPE_BLEND_PROMPTS[normalized]
+    if style and style.strip():
+        prompt = f"{prompt}, {style.strip()}"
+    return prompt
+
 
 PPE_KEYWORDS = {
     "安全帽": "industrial safety helmet, hard hat, protective helmet",
@@ -158,6 +199,21 @@ def _gender_instruction(gender: str | None) -> tuple[str | None, str]:
     return normalized_gender, instruction
 
 
+def _human_wearing_instruction(product_name: str, product_category: str) -> str:
+    source = f"{product_name} {product_category}".lower()
+    if any(keyword in source for keyword in ("安全帽", "头盔", "helmet", "hard hat")):
+        return (
+            "The hard hat is physically seated on the crown of the head, with its brim above the eyebrows; "
+            "hair and glasses meet the helmet naturally, and the helmet never covers the face, floats, or duplicates."
+        )
+    if any(keyword in source for keyword in ("马甲", "背心", "vest", "waistcoat")):
+        return (
+            "The safety vest is worn over both shoulders and torso, with a natural neckline and fabric following the chest and waist; "
+            "it never floats, duplicates, or obscures the face."
+        )
+    return "The wearable PPE has realistic physical contact, scale, shadows, and body-part occlusion; it never floats, duplicates, or appears pasted on."
+
+
 def build_managed_prompt(
     product_name: str,
     product_category: str,
@@ -180,6 +236,7 @@ def build_managed_prompt(
         "product_keywords": _product_keywords(product_name, product_category),
         "scene": scene,
         "style": style,
+        "wearing_instruction": _human_wearing_instruction(product_name, product_category),
         "extra_instructions": _extra_instructions(overrides),
     }
     if overrides:

@@ -1,4 +1,4 @@
-﻿import os
+import os
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -43,9 +43,16 @@ class Settings(BaseModel):
     comfyui_image_to_image_workflow_path: Path = Path(
         os.getenv("COMFYUI_IMAGE_TO_IMAGE_WORKFLOW_PATH", str(base_dir / "app" / "templates" / "comfyui" / "image_to_image_workflow.json"))
     )
+    comfyui_image_to_image_masked_workflow_path: Path = Path(
+        os.getenv("COMFYUI_IMAGE_TO_IMAGE_MASKED_WORKFLOW_PATH", str(base_dir / "app" / "templates" / "comfyui" / "image_to_image_masked_workflow.json"))
+    )
     comfyui_image_node_id: str | None = os.getenv("COMFYUI_IMAGE_NODE_ID")
+    comfyui_mask_node_id: str | None = os.getenv("COMFYUI_MASK_NODE_ID")
     comfyui_denoise: float = float(os.getenv("COMFYUI_DENOISE", "0.60"))
     comfyui_scene_generation_denoise: float = float(os.getenv("COMFYUI_SCENE_GENERATION_DENOISE", "0.35"))
+    # Masked refinement only repaints the PPE/body contact band, so it can spend
+    # a far higher denoise there than a whole-frame img2img ever could.
+    comfyui_human_wearing_blend_denoise: float = float(os.getenv("COMFYUI_HUMAN_WEARING_BLEND_DENOISE", "0.75"))
     comfyui_positive_node_id: str | None = os.getenv("COMFYUI_POSITIVE_NODE_ID")
     comfyui_negative_node_id: str | None = os.getenv("COMFYUI_NEGATIVE_NODE_ID")
     comfyui_latent_node_id: str | None = os.getenv("COMFYUI_LATENT_NODE_ID")

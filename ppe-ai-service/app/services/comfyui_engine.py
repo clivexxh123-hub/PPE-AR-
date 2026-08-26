@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import random
 import tempfile
@@ -9,6 +9,7 @@ import httpx
 from PIL import Image, UnidentifiedImageError
 
 from app.core.config import ensure_storage_dirs, settings
+from app.services.prompt_templates import PPE_BLEND_NEGATIVE_PROMPT
 
 
 class ComfyUIError(RuntimeError):
@@ -98,6 +99,7 @@ def _patch_workflow(
     comfyui_image_name: str | None = None,
     negative_prompt: str | None = None,
     denoise: float | None = None,
+    comfyui_mask_name: str | None = None,
 ) -> dict[str, Any]:
     width, height = _parse_size(size)
     positive_patched = False
@@ -105,6 +107,7 @@ def _patch_workflow(
     latent_patched = False
     save_patched = False
     image_patched = comfyui_image_name is None
+    mask_patched = comfyui_mask_name is None
     denoise_patched = False
     negative_prompt_text = negative_prompt or settings.comfyui_default_negative_prompt
 
@@ -129,6 +132,11 @@ def _patch_workflow(
     if image_node is not None and comfyui_image_name is not None:
         image_node.setdefault("inputs", {})["image"] = comfyui_image_name
         image_patched = True
+
+    mask_node = _node(workflow, settings.comfyui_mask_node_id)
+    if mask_node is not None and comfyui_mask_name is not None:
+        mask_node.setdefault("inputs", {})["image"] = comfyui_mask_name
+        mask_patched = True
 
     save_node = _node(workflow, settings.comfyui_save_node_id)
     if save_node is not None:
@@ -162,6 +170,10 @@ def _patch_workflow(
             inputs["image"] = comfyui_image_name
             image_patched = True
 
+        if not mask_patched and class_type == "LoadImageMask" and "image" in inputs:
+            inputs["image"] = comfyui_mask_name
+            mask_patched = True
+
         if not denoise_patched and generation_mode == "image_to_image" and class_type == "KSampler" and "denoise" in inputs:
             inputs["denoise"] = settings.comfyui_denoise if denoise is None else denoise
             denoise_patched = True
@@ -177,6 +189,14 @@ def _patch_workflow(
         raise ComfyUIError("没有找到可写入 Prompt 的节点。请设置 COMFYUI_POSITIVE_NODE_ID 或检查工作流 JSON。")
     if generation_mode == "image_to_image" and not image_patched:
         raise ComfyUIError("没有找到可写入输入图片的 LoadImage 节点。请设置 COMFYUI_IMAGE_NODE_ID 或检查工作流 JSON。")
+    if not mask_patched:
+        raise ComfyUIError("没有找到可写入 mask 的 LoadImageMask 节点。请设置 COMFYUI_MASK_NODE_ID 或检查工作流 JSON。")
+    if comfyui_mask_name is None and any(
+        isinstance(node, dict) and node.get("class_type") == "LoadImageMask" for node in workflow.values()
+    ):
+        # Running a masked workflow without a mask would repaint the whole frame
+        # at blend denoise - louder to fail than to ship that silently.
+        raise ComfyUIError("该工作流需要 mask，但本次调用没有提供 mask_path。")
     return workflow
 
 
@@ -237,6 +257,7 @@ async def generate_comfyui_image(
     product_image_path: Path | None = None,
     generation_mode: str | None = None,
     denoise: float | None = None,
+    mask_path: Path | None = None,
 ) -> tuple[Path, Path]:
     ensure_storage_dirs()
     output_dir = settings.output_dir / task_id
@@ -249,13 +270,20 @@ async def generate_comfyui_image(
         workflow_generation_mode,
         denoise,
     )
+    masked_refinement = mask_path is not None and workflow_generation_mode == "image_to_image"
     workflow_path = (
-        settings.comfyui_image_to_image_workflow_path
+        (
+            settings.comfyui_image_to_image_masked_workflow_path
+            if masked_refinement
+            else settings.comfyui_image_to_image_workflow_path
+        )
         if workflow_generation_mode == "image_to_image"
         else settings.comfyui_text_to_image_workflow_path
     )
     negative_prompt = (
-        "deformed PPE, extra PPE, floating product, wrong body position, distorted face, extra limbs, "
+        PPE_BLEND_NEGATIVE_PROMPT
+        if requested_generation_mode == "human_wearing_blend"
+        else "deformed PPE, extra PPE, floating product, wrong body position, distorted face, extra limbs, "
         "duplicate helmet, text, watermark, collage, low quality, unnatural pose"
         if requested_generation_mode == "human_wearing"
         else "deformed product, distorted product, extra products, duplicate products, multiple panels, collage, "
@@ -265,16 +293,25 @@ async def generate_comfyui_image(
     )
     timeout = httpx.Timeout(settings.comfyui_timeout_seconds)
     comfyui_image_name: str | None = None
+    comfyui_mask_name: str | None = None
     input_preprocessing: dict[str, int | str] | None = None
     with tempfile.TemporaryDirectory(prefix=f"ppe-img2img-{task_id}-") as temp_dir:
         prepared_image_path: Path | None = None
+        prepared_mask_path: Path | None = None
         if product_image_path is not None:
             prepared_image_path = Path(temp_dir) / "img2img_input.png"
             input_preprocessing = prepare_img2img_input(product_image_path, size, prepared_image_path)
+        if masked_refinement:
+            # The mask goes through the identical fit/pad so it stays pixel
+            # aligned with the composite it masks.
+            prepared_mask_path = Path(temp_dir) / "img2img_mask.png"
+            prepare_img2img_input(mask_path, size, prepared_mask_path)
 
         async with httpx.AsyncClient(base_url=settings.comfyui_base_url, timeout=timeout) as client:
             if prepared_image_path is not None:
                 comfyui_image_name = await _upload_input_image(client, prepared_image_path, task_id)
+            if prepared_mask_path is not None:
+                comfyui_mask_name = await _upload_input_image(client, prepared_mask_path, f"{task_id}-mask")
             workflow = _patch_workflow(
                 _load_workflow(workflow_path),
                 task_id,
@@ -284,6 +321,7 @@ async def generate_comfyui_image(
                 comfyui_image_name,
                 negative_prompt=negative_prompt,
                 denoise=generation_denoise,
+                comfyui_mask_name=comfyui_mask_name,
             )
             queue_response = await client.post("/prompt", json={"prompt": workflow, "client_id": task_id})
             queue_response.raise_for_status()
@@ -311,6 +349,9 @@ async def generate_comfyui_image(
         "product_image_local_path": str(product_image_path) if product_image_path is not None else None,
         "input_preprocessing": input_preprocessing,
         "comfyui_input_image": comfyui_image_name,
+        "comfyui_mask_image": comfyui_mask_name,
+        "masked_refinement": masked_refinement,
+        "mask_local_path": str(mask_path) if mask_path is not None else None,
         "comfyui_base_url": settings.comfyui_base_url,
         "workflow_path": str(workflow_path),
         "denoise": generation_denoise if workflow_generation_mode == "image_to_image" else None,
@@ -338,8 +379,15 @@ def resolve_generation_denoise(
         if not 0 <= value <= 1:
             raise ValueError("denoise 必须在 0 到 1 之间。")
         return value
+    if requested_generation_mode == "human_wearing_blend":
+        # Only the contact band is repainted, so this denoise never touches the
+        # product interior or the wearer's face.
+        return settings.comfyui_human_wearing_blend_denoise
     if requested_generation_mode == "human_wearing":
-        return 0.15
+        # A lightly composited wearable needs enough img2img strength to
+        # rebuild contact, shadows, and anatomical occlusion rather than
+        # preserving a visibly pasted foreground.
+        return 0.35
     if requested_generation_mode == "scene_generation":
         return settings.comfyui_scene_generation_denoise
     return settings.comfyui_denoise
