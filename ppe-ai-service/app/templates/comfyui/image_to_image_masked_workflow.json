@@ -1,0 +1,59 @@
+{
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": { "ckpt_name": "v1-5-pruned-emaonly.safetensors" }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "img2img_input.png" }
+  },
+  "20": {
+    "class_type": "LoadImageMask",
+    "inputs": { "image": "img2img_mask.png", "channel": "red" }
+  },
+  "11": {
+    "class_type": "VAEEncode",
+    "inputs": { "pixels": ["10", 0], "vae": ["4", 2] }
+  },
+  "12": {
+    "class_type": "SetLatentNoiseMask",
+    "inputs": { "samples": ["11", 0], "mask": ["20", 0] }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "a person naturally wearing industrial PPE, realistic contact between the equipment and the body, natural occlusion, realistic contact shadows, commercial photography",
+      "clip": ["4", 1]
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "floating PPE, pasted object, flat overlay, detached garment, duplicate helmet, malformed PPE, text, watermark, low quality",
+      "clip": ["4", 1]
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 2026082601,
+      "steps": 26,
+      "cfg": 6.5,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.75,
+      "model": ["4", 0],
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["12", 0]
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["3", 0], "vae": ["4", 2] }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": { "filename_prefix": "ppe_img2img_masked", "images": ["8", 0] }
+  }
+}

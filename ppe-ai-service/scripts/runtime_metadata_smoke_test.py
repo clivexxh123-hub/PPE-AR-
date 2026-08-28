@@ -46,7 +46,7 @@ def main() -> None:
         assert _requested_denoise(_task().parameters) == 0.42
         assert resolve_generation_denoise("image_to_image", "image_to_image") == 0.6
         assert resolve_generation_denoise("image_to_image", "image_to_image", 0.42) == 0.42
-        assert resolve_generation_denoise("human_wearing", "image_to_image") == 0.15
+        assert resolve_generation_denoise("human_wearing", "image_to_image") == 0.35
         assert resolve_generation_denoise("text_to_image", "text_to_image") is None
 
         business_metadata = _business_extra(_task(), actual_denoise=0.42)
