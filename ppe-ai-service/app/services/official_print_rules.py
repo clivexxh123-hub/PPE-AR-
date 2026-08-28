@@ -122,6 +122,14 @@ def rule_context_from_parameters(parameters: Mapping[str, Any]) -> tuple[Officia
     Legacy calls remain unchanged. Once a caller opts in, every selector and a
     pixel/mm calibration is mandatory, so no unverified physical size is made.
     """
+    # The Node adapter emits a catalog-derived state for every product view.
+    # A missing calibration is an explicit compatibility-mode wait state: do
+    # not invent a physical scale and do not reject local visual generation.
+    # Direct callers without the state retain the existing strict behaviour.
+    status = str(parameters.get("print_rule_status", "")).strip().upper()
+    if status and status != "READY":
+        return None, None
+
     # ``product_view`` predates the official catalog and is already used by
     # helmet placement.  It alone must not opt a legacy call into physical-mm
     # validation; one of the new selectors explicitly activates the catalog.
