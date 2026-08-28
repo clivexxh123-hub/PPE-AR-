@@ -3,12 +3,36 @@ require("dotenv").config();
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
+const { createIamModule } = require("./services/iam");
 
 const productRoutes = require("./routes/product");
 
-const app = express();
+const logoRoutes=require("./routes/logo");
+const aiResourceRoutes = require("./routes/ai-resource");
+const aiGenerationRoutes = require("./routes/ai-generation");
+const customerRoutes = require("./routes/customers");
+const dashboardRoutes = require("./routes/dashboard");
+const { publicErrorPayload } = require("./services/public-error");
 
-app.use(cors());
+const app = express();
+const iam = createIamModule();
+
+if (iam.config.nodeEnv === "production") {
+    app.set("trust proxy", 1);
+}
+
+app.use(cors({
+    credentials: true,
+    origin(origin, callback) {
+        if (!origin || iam.config.allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        const error = new Error("该 Web 来源不允许访问业务 API");
+        error.statusCode = 403;
+        error.errorCode = "IAM_403_ORIGIN_DENIED";
+        return callback(error);
+    }
+}));
 
 app.use(express.json({
     limit: "10mb"
@@ -20,12 +44,16 @@ app.use(express.urlencoded({
 }));
 
 
+app.use("/api/auth", iam.authRouter);
+
 app.use(
     "/uploads",
-    express.static(
-        path.join(__dirname, "uploads")
-    )
+    iam.middleware.authenticate,
+    express.static(path.join(__dirname, "uploads"))
 );
+
+app.use("/api", iam.middleware.authenticate, iam.middleware.requireCsrf);
+app.use("/api/iam", iam.iamRouter);
 
 
 app.use(
@@ -33,12 +61,37 @@ app.use(
     productRoutes
 );
 
+app.use(
+"/api/logos",
+logoRoutes
+);
+
+app.use(
+    "/api",
+    aiResourceRoutes
+);
+
+app.use(
+    "/api/ai",
+    aiGenerationRoutes
+);
+
+app.use(
+    "/api/customers",
+    customerRoutes
+);
+
+app.use(
+    "/api/dashboard",
+    dashboardRoutes
+);
 
 app.get("/", (req, res) => {
     res.json({
         success: true,
         name: "PPE Product Admin API",
-        port: Number(process.env.PORT || 9530)
+        port: Number(process.env.PORT || 9530),
+        auth: iam.config.authEnabled ? "enabled" : "development-bypass"
     });
 });
 
@@ -53,15 +106,23 @@ app.use((error, req, res, next) => {
         });
     }
 
-    res.status(500).json({
+    const publicError = publicErrorPayload(error);
+    if (publicError.retryAfterSeconds) {
+        res.set("Retry-After", String(publicError.retryAfterSeconds));
+    }
+    res.status(publicError.statusCode).json({
         success: false,
-        message: error.message || "服务器内部错误"
+        errorCode: publicError.errorCode,
+        message: publicError.message,
+        ...(publicError.retryAfterSeconds ? { retryAfterSeconds: publicError.retryAfterSeconds } : {}),
+        ...(publicError.retryAt ? { retryAt: publicError.retryAt } : {})
     });
 });
 
 
 const PORT = Number(process.env.PORT || 9530);
+const HOST = String(process.env.HOST || "0.0.0.0").trim() || "0.0.0.0";
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`PPE Product Admin API running: ${PORT}`);
+app.listen(PORT, HOST, () => {
+    console.log(`PPE Product Admin API running: http://${HOST}:${PORT}`);
 });

@@ -1,6 +1,8 @@
 const fs = require("fs");
 const path = require("path");
 const pool = require("../db");
+const { normalizeProductShowcaseInput } = require("../services/product-showcase");
+const { ProductShowcaseRepository } = require("../services/product-showcase-repository");
 
 
 // ======================================================
@@ -73,6 +75,7 @@ function normalizeProduct(row) {
     row.color_count = Number(row.color_count || 0);
     row.source_count = Number(row.source_count || 0);
     row.file_count = Number(row.file_count || 0);
+    row.selling_points = parseColors(row.selling_points);
 
     return row;
 }
@@ -218,25 +221,41 @@ exports.getProducts = async (req, res) => {
         const where = [];
         const params = [];
 
-        if (keyword) {
-            const likeValue = `%${keyword}%`;
+if(keyword){
 
-            where.push(`(
-                p.product_name LIKE ?
-                OR p.goods_no LIKE ?
-                OR p.goods_id LIKE ?
-                OR p.brand_name LIKE ?
-                OR p.cate_full_name LIKE ?
-            )`);
+const keywords = keyword
+.split(/\s+/)
+.filter(Boolean);
 
-            params.push(
-                likeValue,
-                likeValue,
-                likeValue,
-                likeValue,
-                likeValue
-            );
-        }
+keywords.forEach(word=>{
+
+const likeValue=`%${word}%`;
+
+where.push(`
+(
+ p.product_name LIKE ?
+ OR p.goods_no LIKE ?
+ OR p.goods_id LIKE ?
+ OR p.brand_name LIKE ?
+ OR p.category_level_1 LIKE ?
+ OR p.category_level_2 LIKE ?
+ OR p.category_level_3 LIKE ?
+)
+`);
+
+params.push(
+likeValue,
+likeValue,
+likeValue,
+likeValue,
+likeValue,
+likeValue,
+likeValue
+);
+
+});
+
+}
 
         if (categoryLevel1) {
             where.push("p.category_level_1 = ?");
@@ -289,14 +308,40 @@ exports.getProducts = async (req, res) => {
         `;
 
         const listSql = `
-            SELECT
-                p.*,
+         SELECT
 
-                (
-                    SELECT COUNT(*)
-                    FROM product_files pf_count
-                    WHERE pf_count.product_id = p.id
-                ) AS file_count,
+    p.id,
+
+p.product_name AS product_name,
+
+p.goods_no AS goods_no,
+
+p.brand_name AS brand_name,
+
+p.category_level_1 AS category1,
+
+p.category_level_2 AS category2,
+
+p.category_level_3 AS category3,
+
+p.category_level_1 AS category_level_1,
+
+p.category_level_2 AS category_level_2,
+
+p.category_level_3 AS category_level_3,
+
+p.colors AS colors,
+
+p.updated_at AS updated_at,
+
+NULL AS white_image,
+
+
+    (
+        SELECT COUNT(*)
+        FROM product_files pf_count
+        WHERE pf_count.product_id = p.id
+    ) AS file_count,
 
                 CASE
                     WHEN EXISTS (
@@ -311,9 +356,272 @@ exports.getProducts = async (req, res) => {
             FROM product_catalog p
             ${whereSql}
 
-            ORDER BY
-                p.updated_at DESC,
-                p.id DESC
+ORDER BY
+    p.id DESC
+
+            LIMIT ?
+            OFFSET ?
+        `;
+
+        const [countRows] = await pool.query(
+            countSql,
+            params
+        );
+
+        const [rows] = await pool.query(
+            listSql,
+            [...params, size, offset]
+        );
+
+        const list = rows.map((row) => {
+            let colors = row.colors;
+
+            if (typeof colors === "string") {
+                try {
+                    colors = JSON.parse(colors);
+                } catch (error) {
+                    colors = colors
+                        .split(/[,，、/]/)
+                        .map((item) => item.trim())
+                        .filter(Boolean);
+                }
+            }
+
+            if (!Array.isArray(colors)) {
+                colors = [];
+            }
+
+            return {
+                ...row,
+                colors,
+                color_count: Number(
+                    row.color_count ?? colors.length
+                ),
+                source_count: Number(row.source_count || 0),
+                file_count: Number(row.file_count || 0),
+                has_files: Number(row.has_files || 0)
+            };
+        });
+
+        return res.json({
+            success: true,
+            total: Number(countRows[0]?.total || 0),
+            page,
+            size,
+            list
+        });
+    } catch (error) {
+        console.error(
+            "GET /api/products failed:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message: "商品列表查询失败",
+            error: error.message
+        });
+    }
+};
+
+exports.getAIProducts = async (req,res)=>{
+    try {
+        const page = Math.max(
+            parseInt(req.query.page, 10) || 1,
+            1
+        );
+
+        const size = Math.min(
+            Math.max(parseInt(req.query.size, 10) || 20, 1),
+            100
+        );
+
+        const offset = (page - 1) * size;
+
+        const keyword = String(
+            req.query.keyword || ""
+        ).trim();
+
+        const categoryLevel1 = String(
+            req.query.category_level_1 ||
+            req.query.level1 ||
+            req.query.category1 ||
+            ""
+        ).trim();
+
+        const categoryLevel2 = String(
+            req.query.category_level_2 ||
+            req.query.level2 ||
+            req.query.category2 ||
+            ""
+        ).trim();
+
+        const categoryLevel3 = String(
+            req.query.category_level_3 ||
+            req.query.level3 ||
+            req.query.category3 ||
+            ""
+        ).trim();
+
+        const status =
+            req.query.status === undefined ||
+            req.query.status === ""
+                ? null
+                : Number(req.query.status);
+
+        const hasFiles =
+            req.query.has_files === undefined ||
+            req.query.has_files === ""
+                ? null
+                : Number(req.query.has_files);
+
+        console.log("[GET /api/products filters]", {
+            keyword,
+            categoryLevel1,
+            categoryLevel2,
+            categoryLevel3,
+            status,
+            hasFiles,
+            page,
+            size
+        });
+
+        const where = [];
+        const params = [];
+
+if(keyword){
+
+ const keywords = keyword
+ .split(/\s+/)
+ .filter(Boolean);
+
+
+ keywords.forEach(word=>{
+
+ const likeValue=`%${word}%`;
+
+where.push(`
+(
+ p.\`商品名称\` LIKE ?
+ OR p.\`商品ID\` LIKE ?
+ OR p.goods_id LIKE ?
+ OR p.sku_id LIKE ?
+ OR p.\`品牌\` LIKE ?
+ OR p.\`商品分类一级\` LIKE ?
+ OR p.\`商品分类二级\` LIKE ?
+ OR p.\`商品分类三级\` LIKE ?
+)
+`);
+
+
+ params.push(
+ likeValue,
+ likeValue,
+ likeValue,
+ likeValue,
+ likeValue,
+ likeValue,
+ likeValue,
+ likeValue
+ );
+
+
+ });
+
+
+}
+
+        if (categoryLevel1) {
+            where.push("p.category_level_1 = ?");
+            params.push(categoryLevel1);
+        }
+
+        if (categoryLevel2) {
+            where.push("p.category_level_2 = ?");
+            params.push(categoryLevel2);
+        }
+
+        if (categoryLevel3) {
+            where.push("p.category_level_3 = ?");
+            params.push(categoryLevel3);
+        }
+
+        if (status === 0 || status === 1) {
+            where.push("p.status = ?");
+            params.push(status);
+        }
+
+        if (hasFiles === 1) {
+            where.push(`
+                EXISTS (
+                    SELECT 1
+                    FROM product_files pf_filter
+                    WHERE pf_filter.product_id = p.id
+                )
+            `);
+        }
+
+        if (hasFiles === 0) {
+            where.push(`
+                NOT EXISTS (
+                    SELECT 1
+                    FROM product_files pf_filter
+                    WHERE pf_filter.product_id = p.id
+                )
+            `);
+        }
+
+        const whereSql = where.length
+            ? `WHERE ${where.join(" AND ")}`
+            : "";
+
+        const countSql = `
+            SELECT COUNT(*) AS total
+            FROM ppe_products p
+            ${whereSql}
+        `;
+
+        const listSql = `
+         SELECT
+
+    p.id,
+
+    p.\`商品名称\` AS product_name,
+
+    p.\`商品ID\` AS goods_no,
+
+    p.\`品牌\` AS brand_name,
+
+    p.\`商品分类一级\` AS category1,
+
+    p.\`商品分类二级\` AS category2,
+
+    p.\`商品分类三级\` AS category3,
+
+    p.\`商品白底图\` AS white_image,
+
+
+    (
+        SELECT COUNT(*)
+        FROM ppe_product_files pf_count
+        WHERE pf_count.product_id = p.id
+    ) AS file_count,
+
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM ppe_product_files pf_exists
+                        WHERE pf_exists.product_id = p.id
+                    )
+                    THEN 1
+                    ELSE 0
+                END AS has_files
+
+            FROM ppe_products p
+            ${whereSql}
+
+ORDER BY
+    p.id DESC
 
             LIMIT ?
             OFFSET ?
@@ -398,12 +706,19 @@ exports.getProductDetail = async (req, res) => {
             `
                 SELECT
                     p.*,
+                    showcase.material,
+                    showcase.unit_name,
+                    showcase.specification,
+                    showcase.packaging_specification,
+                    showcase.execution_standard,
+                    showcase.selling_points_json AS selling_points,
                     (
                         SELECT COUNT(*)
                         FROM product_files f
                         WHERE f.product_id = p.id
                     ) AS file_count
                 FROM product_catalog p
+                LEFT JOIN business_product_showcase_profiles showcase ON showcase.product_id=p.id
                 WHERE p.id = ?
                 LIMIT 1
             `,
@@ -487,6 +802,7 @@ exports.updateProduct = async (req, res) => {
             colors,
             status
         } = req.body;
+        const showcase = normalizeProductShowcaseInput(req.body || {});
 
         if (!String(product_name || "").trim()) {
             return res.status(400).json({
@@ -550,6 +866,8 @@ exports.updateProduct = async (req, res) => {
                 message: "商品不存在"
             });
         }
+
+        await new ProductShowcaseRepository(connection).upsert(productId, showcase);
 
         await connection.commit();
 
@@ -643,9 +961,18 @@ exports.uploadProductFile = async (req, res) => {
 
         const allowedFileTypes = new Set([
             "cover",
+            "cover_image",
             "product_image",
             "detail_image",
             "white_image",
+            "scene_image",
+            "view_front",
+            "view_left",
+            "view_right",
+            "view_back",
+            "certificate_pdf",
+            "test_report_pdf",
+            "manual_pdf",
             "other"
         ]);
 

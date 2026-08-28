@@ -11,6 +11,7 @@ async def generate_ai_image(
     size: str,
     output_format: str = "png",
     product_image_path: Path | None = None,
+    mask_image_path: Path | None = None,
     generation_mode: str | None = None,
     denoise: float | None = None,
 ) -> tuple[Path, Path, str]:
@@ -23,6 +24,7 @@ async def generate_ai_image(
             size,
             output_format,
             product_image_path=product_image_path,
+            mask_image_path=mask_image_path,
             generation_mode=generation_mode,
             denoise=denoise,
         )

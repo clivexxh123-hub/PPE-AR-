@@ -4,6 +4,7 @@ const path = require("path");
 const fs = require("fs");
 
 const controller = require("../controllers/product.controller");
+const { requirePermission } = require("../services/iam/access");
 
 const router = express.Router();
 
@@ -74,6 +75,11 @@ router.get(
     controller.getProducts
 );
 
+router.get(
+"/ai/products",
+controller.getAIProducts
+);
+
 
 router.get(
     "/products/:id",
@@ -83,12 +89,14 @@ router.get(
 
 router.put(
     "/products/:id",
+    requirePermission("catalog.manage"),
     controller.updateProduct
 );
 
 
 router.post(
     "/products/:id/files",
+    requirePermission("catalog.manage"),
     upload.single("file"),
     controller.uploadProductFile
 );
@@ -96,6 +104,7 @@ router.post(
 
 router.delete(
     "/files/:id",
+    requirePermission("catalog.manage"),
     controller.deleteProductFile
 );
 

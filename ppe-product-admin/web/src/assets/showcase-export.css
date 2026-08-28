@@ -1,0 +1,333 @@
+.selected-product > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.showcase-add-button {
+  padding: 5px 9px;
+  border: 1px solid #315efb;
+  border-radius: 7px;
+  color: #315efb;
+  background: #fff;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.showcase-product-tray {
+  margin: 12px 0 16px;
+  padding: 12px;
+  border: 1px solid #dfe6f2;
+  border-radius: 11px;
+  background: #f8faff;
+}
+
+.showcase-product-tray-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #344054;
+  font-size: 11px;
+}
+
+.showcase-product-tray-heading span {
+  color: #7b879d;
+}
+
+.showcase-product-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.showcase-product-chips > span {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 7px;
+  border: 1px solid #dbe4f5;
+  border-radius: 8px;
+  color: #344054;
+  background: #fff;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.showcase-product-chips b {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  color: #fff;
+  background: #315efb;
+  font-size: 9px;
+}
+
+.showcase-product-chips button {
+  border: 0;
+  color: #98a2b3;
+  background: transparent;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.result-brand-watermark {
+  position: absolute;
+  right: 18px;
+  bottom: 50px;
+  z-index: 5;
+  color: rgba(255, 255, 255, .76);
+  text-shadow: 0 2px 9px rgba(0, 0, 0, .32);
+  font-size: clamp(12px, 1.3vw, 18px);
+  font-weight: 800;
+  letter-spacing: .04em;
+  pointer-events: none;
+}
+
+.result-brand-watermark.is-mock {
+  right: 50%;
+  bottom: 50%;
+  max-width: 90%;
+  padding: 10px 16px;
+  border: 2px solid rgba(220, 38, 38, .8);
+  border-radius: 10px;
+  color: #fff;
+  background: rgba(153, 27, 27, .82);
+  box-shadow: 0 8px 28px rgba(69, 10, 10, .28);
+  font-size: clamp(14px, 1.8vw, 25px);
+  text-align: center;
+  transform: translate(50%, 50%) rotate(-8deg);
+}
+
+.generation-archive-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #dce4f2;
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+.generation-archive-control > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.generation-archive-control strong {
+  color: #344054;
+  font-size: 12px;
+}
+
+.generation-archive-control span {
+  color: #7b879d;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.generation-archive-control select,
+.generation-archive-control button {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #cad4e5;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 11px;
+}
+
+.generation-archive-control button {
+  padding: 0 12px;
+  border-color: #315efb;
+  color: #fff;
+  background: #315efb;
+  cursor: pointer;
+}
+
+.generation-archive-control button:disabled {
+  border-color: #d5dbe6;
+  color: #98a2b3;
+  background: #edf0f5;
+  cursor: not-allowed;
+}
+.result-main-stage.demo-half_body-front .result-vest-logo-preview {
+  left: 43.5%;
+  top: 48%;
+  width: 5.2%;
+  max-height: 5.5%;
+}
+
+.result-main-stage.demo-half_body-front .result-logo-preview {
+  left: 50%;
+  top: 16.2%;
+  width: 3%;
+}
+
+.result-main-stage.demo-half_body-slight_side .result-vest-logo-preview {
+  left: 44.5%;
+  top: 48%;
+  width: 4.8%;
+  max-height: 5.2%;
+  transform: translate(-50%, -50%) rotateY(-12deg) rotate(-2deg);
+}
+
+.result-main-stage.demo-half_body-slight_side .result-logo-preview {
+  left: 50.5%;
+  top: 14.8%;
+  width: 2.9%;
+  transform: translate(-50%, -50%) rotateY(-10deg);
+}
+
+.result-main-stage.demo-full_body-front .result-vest-logo-preview {
+  left: 46.5%;
+  top: 37%;
+  width: 2.8%;
+  max-height: 3.3%;
+}
+
+.result-main-stage.demo-full_body-front .result-logo-preview {
+  left: 50%;
+  top: 13.8%;
+  width: 2.8%;
+}
+
+.result-main-stage.demo-full_body-slight_side .result-vest-logo-preview {
+  left: 47%;
+  top: 35%;
+  width: 2.6%;
+  max-height: 3.1%;
+  transform: translate(-50%, -50%) rotateY(-12deg) rotate(-2deg);
+}
+
+.result-main-stage.demo-full_body-slight_side .result-logo-preview {
+  left: 50.2%;
+  top: 12.5%;
+  width: 2.7%;
+  transform: translate(-50%, -50%) rotateY(-10deg);
+}
+
+.result-main-stage .result-logo-preview.helmet-logo-mark {
+  overflow: hidden;
+  height: auto;
+  max-height: none;
+  aspect-ratio: 1;
+  opacity: .96;
+  filter: contrast(1.08) saturate(1.04);
+  transform-origin: center;
+}
+
+.result-logo-preview.helmet-logo-mark > img {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  display: block;
+  width: 143%;
+  height: 143%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  object-position: center top;
+  transform: translateX(-50%);
+}
+
+.client-demo-products {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid #dbe4ff;
+  border-radius: 13px;
+  background: #f7f9ff;
+}
+
+.client-demo-products-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #172033;
+  font-size: 11px;
+}
+
+.client-demo-products-heading span {
+  color: #7b879d;
+  font-size: 9px;
+}
+
+.client-demo-products > button {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid #e0e6f0;
+  border-radius: 10px;
+  color: #344054;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+
+.client-demo-products > button.selected {
+  border-color: #3157ff;
+  color: #172033;
+  background: #eef3ff;
+}
+
+.client-demo-products > button i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: #fff;
+  background: #98a2b3;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.client-demo-products > button.selected i {
+  background: #3157ff;
+}
+
+.product-result-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.product-result-item.selected {
+  background: #eef3ff;
+}
+
+.product-result-item > button {
+  flex: 0 0 auto;
+  padding: 5px 9px;
+  border: 1px solid #3157ff;
+  border-radius: 8px;
+  color: #3157ff;
+  background: #fff;
+  cursor: pointer;
+}
+
+.clear-vest-logo {
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px 10px;
+  border: 1px solid #f0b5ae;
+  border-radius: 8px;
+  color: #b42318;
+  background: #fff;
+  cursor: pointer;
+}
+
+.client-demo-mode .ai-service-dot {
+  background: #3157ff;
+}

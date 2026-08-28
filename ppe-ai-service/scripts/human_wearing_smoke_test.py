@@ -39,6 +39,13 @@ def _make_ppe(path: Path, *, transparent: bool) -> None:
     image.save(path, format="PNG")
 
 
+def _make_logo(path: Path) -> None:
+    image = Image.new("RGBA", (90, 40), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((3, 3, 87, 37), radius=6, fill=(20, 70, 180, 235))
+    image.save(path, format="PNG")
+
+
 def _task(job_id: str, parameters: dict) -> GenerationTaskInput:
     return GenerationTaskInput(
         jobId=job_id,
@@ -79,9 +86,11 @@ async def main() -> None:
         human_path = root / "human.png"
         ppe_path = root / "ppe.png"
         opaque_ppe_path = root / "opaque-ppe.png"
+        logo_path = root / "logo.png"
         _make_human(human_path)
         _make_ppe(ppe_path, transparent=True)
         _make_ppe(opaque_ppe_path, transparent=False)
+        _make_logo(logo_path)
 
         captured: dict[str, object] = {}
 
@@ -97,6 +106,7 @@ async def main() -> None:
                 "prompt": prompt,
                 "product_image_path": str(product_image_path) if product_image_path else None,
                 "generation_mode": kwargs.get("generation_mode"),
+                "mask_image_path": str(kwargs.get("mask_image_path")) if kwargs.get("mask_image_path") else None,
             }
             output_dir = settings.output_dir / task_id
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -143,11 +153,35 @@ async def main() -> None:
             assert validation["ppe_reference"]["has_alpha"] is True
             assert captured["human-wearing-success"]["generation_mode"] == "human_wearing"
             assert captured["human-wearing-success"]["product_image_path"] == printed_design["path"]
+            assert captured["human-wearing-success"]["mask_image_path"] == printed_design["mask_path"]
+            assert Path(printed_design["mask_path"]).exists()
             assert "front-facing person" in captured["human-wearing-success"]["prompt"]
             output_metadata = json.loads(Path(success["record"].metadata_path).read_text(encoding="utf-8"))
             assert output_metadata["view"] == "front"
             assert output_metadata["framing"] == "half_body"
             assert output_metadata["prompt_template_id"] == "ppe_human_wearing"
+
+            with_logo = await execute(
+                _task(
+                    "human-wearing-with-logo",
+                    {
+                        "generation_mode": "human_wearing",
+                        "human_reference": {"local_path": str(human_path)},
+                        "ppe_reference": {"local_path": str(ppe_path)},
+                        "logo_image": {"local_path": str(logo_path)},
+                        "product_view": "front",
+                        "view": "front",
+                        "framing": "full_body",
+                    },
+                )
+            )
+            assert with_logo["record"].status == TaskStatus.succeeded
+            logo_print = with_logo["payload"]["printed_design"]
+            assert logo_print["logo_applied"] is True
+            assert Path(logo_print["printed_ppe_path"]).exists()
+            assert logo_print["ppe_reference_path"] == logo_print["printed_ppe_path"]
+            assert logo_print["source_ppe_reference_path"] == str(ppe_path)
+            assert captured["human-wearing-with-logo"]["product_image_path"] == logo_print["path"]
 
             missing_human = await execute(
                 _task(

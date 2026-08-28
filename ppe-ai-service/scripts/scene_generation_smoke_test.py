@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -34,14 +32,6 @@ def _make_product(path: Path) -> None:
 
 def _make_opaque_product(path: Path) -> None:
     Image.new("RGB", (220, 180), (240, 190, 20)).save(path, format="PNG")
-
-
-def _make_scene_reference(path: Path) -> None:
-    image = Image.new("RGB", (640, 360), (28, 92, 132))
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 180, 640, 360), fill=(72, 118, 66))
-    draw.rectangle((40, 35, 210, 160), fill=(190, 205, 215))
-    image.save(path, format="PNG")
 
 
 def _verify_img2img_input_sizing(root: Path) -> None:
@@ -100,9 +90,7 @@ async def main() -> None:
         settings.storage_backend = "local"
 
         product_path = root / "helmet.png"
-        scene_reference_path = root / "warehouse-reference.png"
         _make_product(product_path)
-        _make_scene_reference(scene_reference_path)
         captured: dict[str, object] = {}
 
         async def fake_generate(
@@ -163,39 +151,6 @@ async def main() -> None:
             assert captured["scene-generation-success-scene-background"]["generation_mode"] == "scene_generation"
             assert captured["scene-generation-success-scene-background"]["product_image_path"] is None
             assert "empty foreground space" in str(captured["scene-generation-success-scene-background"]["prompt"])
-
-            reference_scene = await execute(
-                _task(
-                    "scene-generation-reference",
-                    {
-                        "generation_mode": "scene_generation",
-                        "product_image": {"local_path": str(product_path)},
-                        "scene_reference": {"local_path": str(scene_reference_path)},
-                    },
-                )
-            )
-            assert reference_scene["record"].status == TaskStatus.succeeded
-            reference_payload = reference_scene["payload"]
-            assert reference_payload["scene_generation_strategy"] == "reference_background_composite"
-            assert reference_payload["background_generated"] is False
-            assert reference_payload["product_composited"] is True
-            assert reference_payload["scene_reference_used"] is True
-            assert reference_payload["input_asset_validation"]["scene_reference"]["validation_status"] == "passed"
-            assert "scene-generation-reference-scene-background" not in captured
-            reference_metadata = json.loads(
-                Path(reference_scene["record"].metadata_path).read_text(encoding="utf-8")
-            )
-            assert reference_metadata["scene_reference_used"] is True
-            assert reference_metadata["printed_design"]["scene_reference_path"] == str(scene_reference_path)
-            with Image.open(reference_scene["record"].output_path) as result_image:
-                # The upper-left reference color survives cover-resize, proving
-                # the supplied scene is part of the final pixels.
-                assert result_image.convert("RGB").getpixel((5, 5)) == (28, 92, 132)
-            visual_output = os.environ.get("PPE_VISUAL_OUTPUT_DIR")
-            if visual_output:
-                target_dir = Path(visual_output)
-                target_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(reference_scene["record"].output_path, target_dir / "scene_reference_composite.png")
 
             missing_product = await execute(
                 _task("scene-generation-missing-product", {"generation_mode": "scene_generation"})

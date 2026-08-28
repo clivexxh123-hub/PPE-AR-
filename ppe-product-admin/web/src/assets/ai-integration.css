@@ -1,0 +1,236 @@
+.generation-edit-source-banner {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin: 0 0 18px;
+  padding: 13px 16px;
+  border: 1px solid #bfd0ff;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #f4f7ff, #fff);
+  box-shadow: 0 8px 24px rgba(49, 87, 255, 0.08);
+}
+
+.generation-edit-source-banner > img {
+  width: 92px;
+  height: 72px;
+  border-radius: 10px;
+  background: #e9eef7;
+  object-fit: contain;
+}
+
+.generation-edit-source-banner > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.generation-edit-source-banner span {
+  color: #3157ff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.generation-edit-source-banner strong {
+  color: #172033;
+  font-size: 14px;
+}
+
+.generation-edit-source-banner p,
+.generation-edit-source-banner small {
+  margin: 0;
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.generation-edit-source-banner small {
+  color: #b54708;
+}
+
+.generation-edit-source-banner > button {
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #fff;
+  color: #475467;
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .generation-edit-source-banner {
+    grid-template-columns: 72px minmax(0, 1fr);
+  }
+
+  .generation-edit-source-banner > img {
+    width: 72px;
+    height: 64px;
+  }
+
+  .generation-edit-source-banner > button {
+    grid-column: 1 / -1;
+  }
+}
+
+.ai-service-state {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 78px;
+  padding: 14px;
+  border: 1px solid #dce4ef;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.ai-service-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #94a3b8;
+  box-shadow: 0 0 0 5px #94a3b824;
+}
+
+.ai-service-state.state-connected .ai-service-dot {
+  background: #22c55e;
+  box-shadow: 0 0 0 5px #22c55e24;
+}
+
+.ai-service-state.state-mock {
+  border-color: #fdba74;
+  background: #fff7ed;
+}
+
+.ai-service-state.state-mock .ai-service-dot {
+  background: #f97316;
+  box-shadow: 0 0 0 5px #f9731624;
+}
+
+.ai-service-state.state-mock strong,
+.ai-service-state.state-mock p {
+  color: #9a3412;
+}
+
+.ai-service-state.state-offline .ai-service-dot {
+  background: #ef4444;
+  box-shadow: 0 0 0 5px #ef444424;
+}
+
+.ai-service-state strong {
+  color: #172033;
+  font-size: 13px;
+}
+
+.ai-service-state p {
+  margin: 4px 0 0;
+  color: #7b879d;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.ai-service-state button {
+  padding: 7px 10px;
+  border: 1px solid #3157ff;
+  border-radius: 9px;
+  background: #fff;
+  color: #3157ff;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ai-service-state button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.integration-scope-note {
+  margin: 10px 2px 0;
+  color: #7b879d;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.generation-preflight {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #dce4ef;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.generation-preflight > strong {
+  color: #344054;
+  font-size: 12px;
+}
+
+.generation-preflight ul {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.generation-preflight li {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.generation-preflight li > span {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: #fff;
+  background: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.generation-preflight li > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.generation-preflight b {
+  color: #344054;
+  font-size: 11px;
+}
+
+.generation-preflight small {
+  color: #667085;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.generation-preflight .check-passed > span {
+  background: #16a34a;
+}
+
+.generation-preflight .check-warning {
+  background: #fff7ed;
+}
+
+.generation-preflight .check-warning > span {
+  background: #f97316;
+}
+
+.generation-preflight .check-failed {
+  background: #fef2f2;
+}
+
+.generation-preflight .check-failed > span {
+  background: #dc2626;
+}

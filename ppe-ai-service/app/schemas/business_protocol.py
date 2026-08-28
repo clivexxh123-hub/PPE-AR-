@@ -8,7 +8,13 @@ from app.schemas.tasks import TaskStatus
 
 
 _FORMAL_ALLOWED_ROLES = {
-    "image_generation": {"product_reference", "printed_design"},
+    "image_generation": {
+        "product_reference",
+        "printed_design",
+        "ppe_reference",
+        "human_reference",
+        "logo",
+    },
     "logo_remove_bg": {"logo"},
     "print_render": {"product_reference", "logo"},
 }
@@ -17,7 +23,6 @@ _FORMAL_IMAGE_SOURCE_FIELDS = {
     "logo_image",
     "base_image",
     "scene_image",
-    "scene_reference",
     "human_reference",
     "ppe_reference",
 }
@@ -216,11 +221,22 @@ class GenerationTaskInput(BaseModel):
         if unsupported_roles:
             raise ValueError(f"{self.type} 不支持 inputAssets role：{', '.join(sorted(unsupported_roles))}。")
         if self.type == "image_generation":
-            if {"product_reference", "printed_design"} <= roles:
-                raise ValueError("image_generation 不能同时包含 product_reference 与 printed_design。")
-            if roles and not ({"product_reference", "printed_design"} & roles):
+            primary_roles = roles & {"product_reference", "printed_design", "ppe_reference"}
+            if len(primary_roles) > 1:
                 raise ValueError(
-                    "image_generation 的非空 inputAssets 必须包含 product_reference 或 printed_design。"
+                    "image_generation 只能包含 product_reference、printed_design、ppe_reference 中的一种。"
+                )
+            if roles and not primary_roles:
+                raise ValueError(
+                    "image_generation 的非空 inputAssets 必须包含一个 PPE/产品主参考图。"
+                )
+            generation_mode = str(self.parameters.get("generation_mode", "")).strip().lower()
+            if generation_mode == "human_wearing":
+                if len(primary_roles) != 1 or "human_reference" not in roles:
+                    raise ValueError("human_wearing 要求一个 PPE 主参考图和 human_reference。")
+            elif {"human_reference", "ppe_reference"} & roles:
+                raise ValueError(
+                    "human_reference 和 ppe_reference 仅支持 generation_mode=human_wearing。"
                 )
         else:
             required_roles = {

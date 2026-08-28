@@ -1,0 +1,93 @@
+.business-records-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+}
+
+.business-records-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px 30px;
+  border: 1px solid #e5e9f2;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.business-records-header > div:first-child > span {
+  color: #315efb;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .15em;
+}
+
+.business-records-header h2 {
+  margin: 7px 0 6px;
+  color: #0b1736;
+  font-size: 25px;
+}
+
+.business-records-header p {
+  margin: 0;
+  color: #697386;
+  font-size: 13px;
+}
+
+.business-records-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.business-records-table-card {
+  overflow: hidden;
+  padding: 10px 20px 18px;
+  border: 1px solid #e5e9f2;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.record-owner-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.record-owner-cell strong {
+  color: #25324a;
+  font-size: 13px;
+}
+
+.record-owner-cell span {
+  color: #7b879d;
+  font-size: 11px;
+}
+
+.record-owner-cell .record-revision-mark {
+  align-self: flex-start;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #315efb;
+  font-weight: 700;
+}
+
+.record-operation-cell {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .business-records-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .business-records-table-card {
+    overflow-x: auto;
+  }
+}

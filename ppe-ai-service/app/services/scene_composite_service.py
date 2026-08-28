@@ -38,11 +38,8 @@ def render_scene_marketing_image(
     product_width_ratio: float = 0.55,
     position_x_ratio: float = 0.5,
     position_y_ratio: float = 0.58,
-    strategy: str = "generated_background_composite",
-    background_generated: bool = True,
-    scene_reference_used: bool = False,
 ) -> tuple[Path, Path]:
-    """Composite a transparent PPE product over a generated or supplied scene background."""
+    """Composite a transparent PPE product over a generated marketing background."""
     ensure_storage_dirs()
     if not background_path.exists() or not ppe_path.exists():
         raise ValueError("scene_generation background or PPE foreground file does not exist.")
@@ -79,9 +76,8 @@ def render_scene_marketing_image(
         json.dumps(
             {
                 "engine": "pillow-scene-foreground-composite",
-                "scene_generation_strategy": strategy,
-                "background_generated": background_generated,
-                "scene_reference_used": scene_reference_used,
+                "scene_generation_strategy": "generated_background_composite",
+                "background_generated": True,
                 "product_composited": True,
                 "background_path": str(background_path),
                 "ppe_foreground_path": str(ppe_path),

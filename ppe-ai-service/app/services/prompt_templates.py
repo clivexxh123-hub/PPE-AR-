@@ -25,19 +25,23 @@ No text, labels, watermark, collage, duplicate products, or people.
 ${extra_instructions}"""
 
 HUMAN_WEARING_TEMPLATE = """Realistic commercial PPE marketing photo of a person wearing one ${product_name}.
-PPE category: ${product_category}. Correct product position on the body; preserve the PPE color, silhouette, and visible structure.
+PPE category: ${product_category}. Reference construction: ${product_keywords}.
+${wearing_instructions}
+Correct product position on the body; preserve the PPE color, silhouette, reflective bands, pockets, fasteners, and visible structure.
 Scene: ${scene}. Visual style: ${style}.
-Natural human pose, realistic lighting, and sharp product details.
+Natural human pose, realistic lighting, physically plausible fabric contact, soft folds, seams, shadows, and sharp product details.
 ${extra_instructions}"""
 
 PPE_KEYWORDS = {
     "安全帽": "industrial safety helmet, hard hat, protective helmet",
     "面罩": "protective face shield, clear visor, transparent safety face shield",
     "手套": "protective work gloves, safety gloves, industrial gloves",
+    "安全鞋": "industrial safety footwear, protective work shoes, safety boots",
+    "劳保鞋": "industrial safety footwear, protective work shoes, safety boots",
+    "靴子": "industrial safety footwear, protective work boots",
     "护目镜": "safety goggles, protective eyewear, clear industrial goggles",
+    "反光马甲": "high visibility safety vest, reflective vest, industrial safety vest",
     "反光背心": "high visibility safety vest, reflective vest, industrial safety vest",
-    "马甲": "high visibility safety vest, reflective vest, industrial safety vest",
-    "靴子": "protective work boots, industrial safety boots, steel toe boots",
 }
 
 _TEMPLATE_IDS_BY_MODE = {
@@ -53,10 +57,6 @@ _COMPOSITION_INSTRUCTIONS = {
     ("slight_side", "half_body"): "Composition: person in a slight side view, half-body framing from the waist up.",
     ("slight_side", "full_body"): "Composition: person in a slight side view, full-body framing with the complete figure visible.",
 }
-_GENDER_INSTRUCTIONS = {
-    "male": "Person: adult male PPE model.",
-    "female": "Person: adult female PPE model.",
-}
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,6 @@ class PromptBuildResult:
     prompt: str
     view: str | None = None
     framing: str | None = None
-    gender: str | None = None
 
     @property
     def summary(self) -> str:
@@ -83,8 +82,6 @@ class PromptBuildResult:
             metadata["view"] = self.view
         if self.framing is not None:
             metadata["framing"] = self.framing
-        if self.gender is not None:
-            metadata["gender"] = self.gender
         return metadata
 
 
@@ -98,6 +95,36 @@ def _product_keywords(product_name: str, product_category: str) -> str:
         if keyword in source:
             return english_prompt
     return "single PPE safety product, industrial protective equipment"
+
+
+def _wearing_instructions(product_name: str, product_category: str) -> str:
+    source = f"{product_name} {product_category}".lower()
+    if any(keyword in source for keyword in ("反光马甲", "反光背心", "马甲", "背心", "reflective vest", "safety vest")):
+        return (
+            "Replace any existing torso vest with exactly one reference safety vest. "
+            "The garment wraps the shoulders and torso; neckline and armholes remain open, side edges follow body depth, "
+            "and the lower hem follows the waist. The original plain base shirt remains visible through the V-neck "
+            "and armholes; there is no second vest layer. Integrate it as real worn fabric, never as a flat overlay."
+        )
+    if any(keyword in source for keyword in ("安全帽", "头盔", "helmet", "hard hat")):
+        return (
+            "Place exactly one reference helmet on the crown of the head with the brim resting above the eyebrows. "
+            "Preserve the face and identity; only hair and the helmet contact edge may be refined."
+        )
+    if any(keyword in source for keyword in ("手套", "glove")):
+        return (
+            "Place one matching reference glove on each visible hand. Preserve left/right anatomy, finger direction, "
+            "wrist cuffs, product color, and the original arms; never create extra hands or gloves."
+        )
+    if any(keyword in source for keyword in ("安全鞋", "劳保鞋", "工作鞋", "靴子", "shoe", "boot", "footwear")):
+        return (
+            "Place one matching reference safety shoe on each visible foot. Preserve left/right foot direction, ankle "
+            "contact, sole shape, product color, and ground contact; never create extra feet or shoes."
+        )
+    return (
+        "Integrate the reference PPE with the correct body part and preserve realistic contact, scale, perspective, "
+        "occlusion, edge transitions, and cast shadows."
+    )
 
 
 def _select_template_id(template_id: str | None, generation_mode: str | None) -> tuple[str, str]:
@@ -147,17 +174,6 @@ def _composition_instruction(view: str | None, framing: str | None) -> tuple[str
     return normalized_view, normalized_framing, instruction
 
 
-def _gender_instruction(gender: str | None) -> tuple[str | None, str]:
-    if gender is None or not gender.strip():
-        return None, ""
-    normalized_gender = gender.strip().lower()
-    instruction = _GENDER_INSTRUCTIONS.get(normalized_gender)
-    if instruction is None:
-        supported = ", ".join(sorted(_GENDER_INSTRUCTIONS))
-        raise ValueError(f"gender 仅支持：{supported}。")
-    return normalized_gender, instruction
-
-
 def build_managed_prompt(
     product_name: str,
     product_category: str,
@@ -169,15 +185,14 @@ def build_managed_prompt(
     generation_mode: str | None = None,
     view: str | None = None,
     framing: str | None = None,
-    gender: str | None = None,
 ) -> PromptBuildResult:
     selected_id, selection_rule = _select_template_id(template_id, generation_mode)
     selected_view, selected_framing, composition = _composition_instruction(view, framing)
-    selected_gender, gender_instruction = _gender_instruction(gender)
     values = {
         "product_name": product_name,
         "product_category": product_category,
         "product_keywords": _product_keywords(product_name, product_category),
+        "wearing_instructions": _wearing_instructions(product_name, product_category),
         "scene": scene,
         "style": style,
         "extra_instructions": _extra_instructions(overrides),
@@ -189,18 +204,16 @@ def build_managed_prompt(
     extra = values["extra_instructions"]
     if extra and "${extra_instructions}" not in template_text:
         prompt = f"{prompt}\n{extra}"
-    composition_prefix = "\n".join(item for item in (gender_instruction, composition) if item)
-    if composition_prefix:
+    if composition:
         # Keep the composition at the beginning so the persisted prompt summary
         # remains distinguishable even when a long template is truncated.
-        prompt = f"{composition_prefix}\n{prompt}"
+        prompt = f"{composition}\n{prompt}"
     return PromptBuildResult(
         template_id=selected_id,
         selection_rule=selection_rule,
         prompt=prompt,
         view=selected_view,
         framing=selected_framing,
-        gender=selected_gender,
     )
 
 
