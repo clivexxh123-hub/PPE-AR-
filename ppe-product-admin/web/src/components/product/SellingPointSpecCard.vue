@@ -96,7 +96,7 @@ function removePoint(index) {
     <div class="section-heading specification-heading">
       <div>
         <h2>商品规格</h2>
-        <p>维护产品材质、单位、产品规格与包装信息</p>
+        <p>维护长图所需的材质、单位、执行标准、产品规格与包装信息</p>
       </div>
     </div>
 
@@ -112,6 +112,18 @@ function removePoint(index) {
         <el-input
           v-model="form.unit_name"
           placeholder="例如：个、套、盒"
+        />
+      </el-form-item>
+
+      <el-form-item
+        label="执行标准"
+        class="span-2"
+      >
+        <el-input
+          v-model="form.execution_standard"
+          maxlength="500"
+          show-word-limit
+          placeholder="例如：GB 2811-2019；必须填写真实来源，不使用默认文案"
         />
       </el-form-item>
 

@@ -57,6 +57,7 @@ const form = reactive({
   unit_name: "",
   specification: "",
   packaging_specification: "",
+  execution_standard: "",
 
   files: []
 })
@@ -210,6 +211,12 @@ function fillForm(rawData) {
     data.packaging_spec ??
     ""
 
+  form.execution_standard =
+    data.execution_standard ??
+    data.national_standard ??
+    data.standard ??
+    ""
+
   form.files = normalizeFiles(data)
 }
 
@@ -291,7 +298,10 @@ function buildPayload() {
       form.specification.trim(),
 
     packaging_specification:
-      form.packaging_specification.trim()
+      form.packaging_specification.trim(),
+
+    execution_standard:
+      form.execution_standard.trim()
   }
 }
 

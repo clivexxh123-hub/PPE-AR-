@@ -9,7 +9,9 @@
 # Local environment and runtime files
 **/.env
 **/.env.*
+!**/.env.example
 *.log
+/ai-runtime/
 
 # Editor and OS metadata
 .DS_Store

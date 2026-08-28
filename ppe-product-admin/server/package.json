@@ -4,7 +4,18 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "start:local": "node scripts/start-local.js",
+    "migrate:ai-resources": "node scripts/migrate-ai-resources.js",
+    "migrate:iam": "node scripts/migrate-iam.js",
+    "bootstrap:admin": "node scripts/bootstrap-admin.js",
+    "set:user-password": "node scripts/set-user-password.js",
+    "seed:base-model-assets": "node scripts/seed-base-model-assets.js",
+    "seed:p0-real-assets": "node scripts/seed-p0-real-assets.js",
+    "import:test-images": "node scripts/import-test-image-dataset.js",
+    "prepare:client-demo": "node scripts/prepare-client-demo.js",
+    "sync:legacy-logos": "node scripts/sync-legacy-logos.js --apply",
+    "test": "node --check server.js && node --check controllers/ai-resource.controller.js && node --check routes/ai-resource.js && node --check routes/ai-generation.js && node --check routes/auth.js && node --check routes/iam.js && node --check routes/customers.js && node --check routes/dashboard.js && node --check scripts/import-test-image-dataset.js && node --check scripts/prepare-client-demo.js && node --check scripts/sync-legacy-logos.js && node --check scripts/seed-base-model-assets.js && node --check scripts/set-user-password.js && node --check services/iam/password.js && node --check services/customer-repository.js && node --check services/customer-service.js && node --check services/dashboard-statistics-repository.js && node --check services/dashboard-statistics.js && node --check services/generation-archive-repository.js && node --check services/generation-archive-service.js && node --check services/product-showcase.js && node --check services/product-showcase-repository.js && node --test"
   },
   "keywords": [],
   "author": "",

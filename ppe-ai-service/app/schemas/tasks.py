@@ -35,7 +35,6 @@ class GenerateRequest(BaseModel):
     style: str = Field(description="画面风格描述。")
     view: str | None = Field(default=None, description="可选构图视角：front 或 slight_side；需与 framing 成对提供。")
     framing: str | None = Field(default=None, description="可选构图景别：half_body 或 full_body；需与 view 成对提供。")
-    gender: str | None = Field(default=None, description="可选人物性别：male 或 female；用于 human_wearing 人物构图。")
     size: str = Field(description="输出尺寸，格式为 宽x高，例如 1024x1024。")
     prompt_overrides: dict[str, Any] = Field(default_factory=dict, description="Prompt 补充字段，用于前端或后端临时覆盖模板参数。")
     output_format: str = Field(description="输出图片格式，当前默认 png。")

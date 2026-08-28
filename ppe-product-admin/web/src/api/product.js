@@ -1,17 +1,19 @@
 import request from "./request";
 
-export function getCategories() {
+export function getCategories(config = {}) {
   return request({
     url: "/categories",
-    method: "get"
+    method: "get",
+    ...config
   });
 }
 
-export function getProducts(params) {
+export function getProducts(params, config = {}) {
   return request({
     url: "/products",
     method: "get",
-    params
+    params,
+    ...config
   });
 }
 

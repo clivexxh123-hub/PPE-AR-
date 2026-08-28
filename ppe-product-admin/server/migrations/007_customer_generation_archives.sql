@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS business_customer_generation_archives (
+    job_id VARCHAR(128) PRIMARY KEY,
+    customer_id CHAR(36) NOT NULL,
+    tenant_id VARCHAR(64) NOT NULL,
+    batch_id VARCHAR(64) NULL,
+    archived_file_url VARCHAR(500) NOT NULL,
+    content_type VARCHAR(80) NOT NULL,
+    file_size BIGINT NOT NULL,
+    archived_by_user_id CHAR(36) NOT NULL,
+    archived_by_user_name VARCHAR(80) NOT NULL,
+    org_unit_id_at_event VARCHAR(64) NULL,
+    org_unit_name_at_event VARCHAR(100) NULL,
+    department_id_at_event VARCHAR(64) NULL,
+    department_name_at_event VARCHAR(100) NULL,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    INDEX idx_customer_generation_archive_customer_time (customer_id, created_at),
+    INDEX idx_customer_generation_archive_user_time (archived_by_user_id, created_at),
+    CONSTRAINT fk_customer_generation_archive_job FOREIGN KEY (job_id) REFERENCES business_generation_records(job_id),
+    CONSTRAINT fk_customer_generation_archive_customer FOREIGN KEY (customer_id) REFERENCES business_customers(id),
+    CONSTRAINT fk_customer_generation_archive_user FOREIGN KEY (archived_by_user_id) REFERENCES iam_users(id)
+);

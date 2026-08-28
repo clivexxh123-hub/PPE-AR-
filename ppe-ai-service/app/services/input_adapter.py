@@ -6,6 +6,7 @@ import httpx
 from fastapi import UploadFile
 
 from app.core.config import ensure_storage_dirs, settings
+from app.services.url_security import validate_public_http_url
 from app.schemas.tasks import ImageSource
 
 
@@ -29,7 +30,11 @@ async def resolve_image_source(source: ImageSource | None) -> Path | None:
     if source.local_path:
         return Path(source.local_path)
     if source.url:
-        response = await httpx.AsyncClient().get(str(source.url), timeout=30)
+        url = str(source.url)
+        validate_public_http_url(url, purpose="image URL")
+        response = await httpx.AsyncClient(follow_redirects=False).get(url, timeout=30)
+        if response.is_redirect:
+            raise ValueError("图片 URL 不允许未经校验的重定向。")
         response.raise_for_status()
         suffix = Path(str(source.url.path)).suffix.lower() or ".img"
         file_id = f"{uuid.uuid4().hex}{suffix}"

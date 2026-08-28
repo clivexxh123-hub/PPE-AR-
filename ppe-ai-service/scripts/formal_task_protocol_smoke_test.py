@@ -147,7 +147,14 @@ def main() -> None:
     )
     _expect_invalid(conflicting_references)
 
-    for field in ("product_image", "logo_image", "base_image", "scene_image"):
+    for field in (
+        "product_image",
+        "logo_image",
+        "base_image",
+        "scene_image",
+        "human_reference",
+        "ppe_reference",
+    ):
         for source_key, source_value in (
             ("url", "https://assets.example/parameter.png?signature=temporary"),
             ("file_id", "local-file.png"),
@@ -208,8 +215,47 @@ def main() -> None:
             "expiresAt": "2099-08-18T12:00:00Z",
         }
     )
-    _expect_invalid(extra_logo)
-    invalid_http_payloads.append(extra_logo)
+    logo_generation_task = _expect_valid(extra_logo)
+    assert _parameters_with_input_assets(logo_generation_task)["logo_image"]["url"].startswith(
+        "https://assets.example/logo.png"
+    )
+
+    human_wearing = _formal_payload()
+    human_wearing["parameters"]["generation_mode"] = "human_wearing"
+    human_wearing["inputAssets"][0]["role"] = "ppe_reference"
+    human_wearing["inputAssets"].extend(
+        [
+            {
+                "assetId": "human-1",
+                "role": "human_reference",
+                "version": 1,
+                "url": "https://assets.example/human.png?signature=temporary",
+                "expiresAt": "2099-08-18T12:00:00Z",
+            },
+            {
+                "assetId": "logo-1",
+                "role": "logo",
+                "version": 1,
+                "url": "https://assets.example/logo.png?signature=temporary",
+                "expiresAt": "2099-08-18T12:00:00Z",
+            },
+        ]
+    )
+    human_task = _expect_valid(human_wearing)
+    human_parameters = _parameters_with_input_assets(human_task)
+    assert human_parameters["ppe_reference"]["url"].startswith("https://assets.example/product.png")
+    assert human_parameters["human_reference"]["url"].startswith("https://assets.example/human.png")
+    assert human_parameters["logo_image"]["url"].startswith("https://assets.example/logo.png")
+
+    missing_human = copy.deepcopy(human_wearing)
+    missing_human["inputAssets"] = [
+        asset for asset in missing_human["inputAssets"] if asset["role"] != "human_reference"
+    ]
+    _expect_invalid(missing_human)
+
+    human_without_mode = copy.deepcopy(human_wearing)
+    human_without_mode["parameters"].pop("generation_mode")
+    _expect_invalid(human_without_mode)
 
     logo_with_product = copy.deepcopy(logo_task)
     logo_with_product["inputAssets"].append(copy.deepcopy(_formal_payload()["inputAssets"][0]))

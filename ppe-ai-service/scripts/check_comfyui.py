@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-COMFYUI_BASE_URL = "http://127.0.0.1:8188"
-MODEL_ROOT = Path(r"D:\Comfy-Desktop\ComfyUI-Shared\models")
+COMFYUI_BASE_URL = os.getenv("COMFYUI_BASE_URL", "http://127.0.0.1:8188").rstrip("/")
+MODEL_ROOT_VALUE = os.getenv("COMFYUI_MODEL_ROOT", "").strip()
+MODEL_ROOT = Path(MODEL_ROOT_VALUE) if MODEL_ROOT_VALUE else None
 MODEL_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".gguf"}
 
 
@@ -21,7 +23,7 @@ def request_json(path: str) -> dict[str, Any]:
 
 
 def list_model_files() -> list[Path]:
-    if not MODEL_ROOT.exists():
+    if MODEL_ROOT is None or not MODEL_ROOT.exists():
         return []
     return [path for path in MODEL_ROOT.rglob("*") if path.is_file() and path.suffix.lower() in MODEL_EXTENSIONS]
 
@@ -64,14 +66,14 @@ def main() -> int:
     checkpoint_names = get_available_names("CheckpointLoaderSimple", "ckpt_name")
     unet_names = get_available_names("UNETLoader", "unet_name")
 
-    print(f"模型目录：{MODEL_ROOT}")
+    print(f"模型目录：{MODEL_ROOT or '未配置 COMFYUI_MODEL_ROOT（仅使用 API 探测）'}")
     print(f"扫描到模型文件数量：{len(model_files)}")
     print(f"ComfyUI 可选 checkpoint 数量：{len(checkpoint_names)}")
     print(f"ComfyUI 可选 diffusion/UNet 数量：{len(unet_names)}")
 
     for path in model_files[:10]:
         size_gb = round(path.stat().st_size / 1024 / 1024 / 1024, 2)
-        print(f"- {path.relative_to(MODEL_ROOT)}（{size_gb} GB）")
+        print(f"- {path.relative_to(MODEL_ROOT) if MODEL_ROOT else path.name}（{size_gb} GB）")
 
     print("\n结论：")
     if not model_files and not checkpoint_names and not unet_names:

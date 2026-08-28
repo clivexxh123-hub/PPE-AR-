@@ -50,7 +50,11 @@ def main() -> None:
             assert 0 < automatic["final_x_ratio"] < 1
             assert 0 < automatic["final_y_ratio"] < 1
             assert 0.10 <= automatic["final_width_ratio"] <= 0.35
-            assert automatic["logo_width"] / automatic["logo_height"] == 2
+            assert automatic["logo_transparent_padding_trimmed"] is True
+            assert automatic["logo_visible_bounds"] == [2, 2, 78, 38]
+            visible_aspect = automatic["logo_visible_width"] / automatic["logo_visible_height"]
+            rendered_aspect = automatic["logo_width"] / automatic["logo_height"]
+            assert abs(rendered_aspect - visible_aspect) < 0.08
             assert 0 <= automatic["position_x"] <= 200 - automatic["logo_width"]
             assert 0 <= automatic["position_y"] <= 120 - automatic["logo_height"]
 

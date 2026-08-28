@@ -35,6 +35,7 @@ def _task() -> GenerationTaskInput:
 def main() -> None:
     original_engine = settings.ai_engine
     original_default_denoise = settings.comfyui_denoise
+    original_human_wearing_denoise = settings.comfyui_human_wearing_blend_denoise
     try:
         with TestClient(app) as client:
             settings.ai_engine = "mock"
@@ -43,10 +44,11 @@ def main() -> None:
             assert client.get("/health").json()["engine"] == "comfyui"
 
         settings.comfyui_denoise = 0.6
+        settings.comfyui_human_wearing_blend_denoise = 0.65
         assert _requested_denoise(_task().parameters) == 0.42
         assert resolve_generation_denoise("image_to_image", "image_to_image") == 0.6
         assert resolve_generation_denoise("image_to_image", "image_to_image", 0.42) == 0.42
-        assert resolve_generation_denoise("human_wearing", "image_to_image") == 0.35
+        assert resolve_generation_denoise("human_wearing", "image_to_image") == 0.65
         assert resolve_generation_denoise("text_to_image", "text_to_image") is None
 
         business_metadata = _business_extra(_task(), actual_denoise=0.42)
@@ -66,6 +68,7 @@ def main() -> None:
     finally:
         settings.ai_engine = original_engine
         settings.comfyui_denoise = original_default_denoise
+        settings.comfyui_human_wearing_blend_denoise = original_human_wearing_denoise
 
     print("runtime metadata smoke test passed")
 

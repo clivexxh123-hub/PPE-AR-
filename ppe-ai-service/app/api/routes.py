@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from PIL import Image, ImageChops
 from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
@@ -14,6 +15,7 @@ from app.services.asset_result import build_business_task_result
 from app.services.callback_service import send_worker_callback
 from app.services.error_codes import map_exception_to_error
 from app.services.generation_engine import generate_ai_image
+from app.services.human_scene_service import render_human_in_scene
 from app.services.human_wearing_service import render_human_wearing_design, resolve_human_wearing_placement
 from app.services.image_asset_service import (
     ImageAssetValidationError,
@@ -23,7 +25,7 @@ from app.services.image_asset_service import (
     validate_image_source,
 )
 from app.services.input_adapter import resolve_image_source, save_upload
-from app.services.logo_service import normalize_logo, render_printed_design
+from app.services.logo_service import normalize_logo, render_printed_design, render_printed_text
 from app.services.logo_archive_service import archive_logo_asset
 from app.services.logo_template_store import LogoPlacementResolution, resolve_logo_placement
 from app.services.prompt_templates import (
@@ -31,6 +33,7 @@ from app.services.prompt_templates import (
     build_managed_prompt,
     build_scene_background_prompt,
 )
+from app.services.print_standard_service import resolve_print_standard
 from app.services.scene_composite_service import render_scene_marketing_image
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
@@ -218,6 +221,8 @@ def _parameters_with_input_assets(task: GenerationTaskInput) -> dict[str, Any]:
         field_by_role = {
             "product_reference": "product_image",
             "printed_design": "product_image",
+            "ppe_reference": "ppe_reference",
+            "human_reference": "human_reference",
             "logo": "logo_image",
             "scene": "scene_image",
         }
@@ -302,7 +307,6 @@ def _placement_summary(metadata_path: Path) -> dict[str, Any]:
             "placement_mode",
             "placement_profile",
             "printable_region_bounds",
-            "product_bounds",
             "final_x_ratio",
             "final_y_ratio",
             "final_width_ratio",
@@ -311,41 +315,21 @@ def _placement_summary(metadata_path: Path) -> dict[str, Any]:
     }
 
 
-def _helmet_view_placement_defaults(parameters: dict[str, Any]) -> dict[str, str]:
-    """Map optional semantic hints to local product-relative print profiles.
-
-    View is intentionally read from loose local parameters rather than added to
-    the frozen task contract.  A template or explicit manual placement is
-    merged above this default by ``resolve_logo_placement``.
-    """
-    aliases = {
-        "front": "front",
-        "正面": "front",
-        "back": "back",
-        "背面": "back",
-        "left": "left",
-        "左侧": "left",
-        "right": "right",
-        "右侧": "right",
-        "front_left_chest": "front_left_chest",
-        "front-left-chest": "front_left_chest",
-        "front_right_chest": "front_right_chest",
-        "front-right-chest": "front_right_chest",
-        "back_upper": "back_upper",
-        "back-upper": "back_upper",
-        "back_middle": "back_middle",
-        "back-middle": "back_middle",
-        "back_lower": "back_lower",
-        "back-lower": "back_lower",
+def _helmet_view_placement_defaults(parameters: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a category-aware print zone from the supplied standards."""
+    if not parameters.get("ppe_category") and not parameters.get("product_name"):
+        legacy_view = str(
+            parameters.get("product_view") or parameters.get("view_type") or ""
+        ).strip().lower()
+        if legacy_view in {"front", "正面"}:
+            return {"position": "front"}
+        if legacy_view in {"back", "背面"}:
+            return {"position": "back"}
+        return {}
+    standard = resolve_print_standard(parameters)
+    return {
+        "position": standard["position"],
     }
-    for key in ("print_region", "placement_region", "product_view", "view", "view_type", "viewType"):
-        value = parameters.get(key)
-        if value is None:
-            continue
-        normalized = str(value).strip().lower()
-        if normalized in aliases:
-            return {"position": aliases[normalized]}
-    return {}
 
 
 def _manual_placement_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
@@ -362,7 +346,6 @@ def _logo_template_metadata(resolution: LogoPlacementResolution, metadata_path: 
         "placement_mode",
         "placement_profile",
         "printable_region_bounds",
-        "product_bounds",
         "final_x_ratio",
         "final_y_ratio",
         "final_width_ratio",
@@ -434,82 +417,282 @@ async def _prepare_human_wearing_input(
 ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
     validation = dict(input_asset_validation or {})
     human_source = _image_source_from_parameter(task.parameters.get("human_reference"))
-    ppe_source = _image_source_from_parameter(
-        task.parameters.get("ppe_reference") or task.parameters.get("product_image")
-    )
     if human_source is None:
         raise ValueError("human_wearing 需要 parameters.human_reference。")
-    if ppe_source is None:
-        raise ValueError("human_wearing 需要 parameters.ppe_reference 或透明 product_image。")
-
-    try:
-        validation["human_reference"] = await validate_image_source(human_source, "human_reference")
-        validation["ppe_reference"] = await validate_image_source(ppe_source, "ppe_reference")
-        ppe_path = _validated_image_path(validation, "ppe_reference")
-        if ppe_path is None:
-            raise ValueError("ppe_reference 校验失败。")
-        validation["ppe_reference"].update(validate_alpha_channel(ppe_path, "ppe_reference"))
-    except ImageAssetValidationError as exc:
-        combined = dict(validation)
-        ppe_validation = combined.get("ppe_reference")
-        if isinstance(ppe_validation, dict):
-            ppe_validation.update(exc.validation_result)
-        else:
-            combined.update(exc.validation_result)
-        raise ImageAssetValidationError(str(exc), combined) from exc
-
+    validation["human_reference"] = await validate_image_source(human_source, "human_reference")
     human_path = _validated_image_path(validation, "human_reference")
-    ppe_path = _validated_image_path(validation, "ppe_reference")
-    if human_path is None or ppe_path is None:
-        raise ValueError("human_reference 或 ppe_reference 校验失败。")
+    if human_path is None:
+        raise ValueError("human_reference 校验失败。")
 
-    placement = resolve_human_wearing_placement(
-        generate_payload.product_name,
-        generate_payload.product_category,
-        task.parameters,
+    raw_items = task.parameters.get("outfit_items")
+    if not isinstance(raw_items, list) or not raw_items:
+        raw_items = [{
+            "product_name": generate_payload.product_name,
+            "product_category": generate_payload.product_category,
+            "product_view": str(task.parameters.get("product_view", "front")),
+            "product_surface": str(task.parameters.get("prompt_overrides", {}).get("product_surface", "ppe")),
+            "ppe_category": str(task.parameters.get("ppe_category", "")),
+            "print_text": str(task.parameters.get("prompt_overrides", {}).get("print_text", "")),
+            "ppe_reference": task.parameters.get("ppe_reference") or task.parameters.get("product_image"),
+            "logo_image": task.parameters.get("logo_image"),
+        }]
+
+    category_order = {"vest": 0, "helmet": 1, "goggles": 2, "gloves": 3, "boots": 4}
+    items = sorted(
+        [dict(item) for item in raw_items if isinstance(item, dict)],
+        key=lambda item: category_order.get(str(item.get("ppe_category", "")).lower(), 9),
     )
-    image_path, metadata_path = render_human_wearing_design(
-        f"{task.jobId}-human-wearing",
-        human_path,
-        ppe_path,
-        size=generate_payload.size,
-        position_x_ratio=placement["position_x_ratio"],
-        position_y_ratio=placement["position_y_ratio"],
-        ppe_width_ratio=placement["ppe_width_ratio"],
-        human_top_padding_ratio=placement["human_top_padding_ratio"],
-        opacity=placement["opacity"],
-        ppe_category=placement["ppe_category"],
-    )
-    _append_output_metadata(
-        metadata_path,
-        {
+    current_human_path = human_path
+    masks: list[Path] = []
+    rendered_items: list[dict[str, Any]] = []
+    shared_body_anchors: dict[str, Any] | None = None
+    scene_subject_reference_path: Path | None = None
+
+    for index, item in enumerate(items):
+        ppe_source = _image_source_from_parameter(item.get("ppe_reference"))
+        if ppe_source is None:
+            raise ValueError(f"第 {index + 1} 件 PPE 缺少 ppe_reference。")
+        ppe_key = f"outfit_{index}_ppe_reference"
+        validation[ppe_key] = await validate_image_source(ppe_source, ppe_key)
+        if len(items) == 1:
+            validation["ppe_reference"] = validation[ppe_key]
+        ppe_path = _validated_image_path(validation, ppe_key)
+        if ppe_path is None:
+            raise ValueError(f"第 {index + 1} 件 PPE 校验失败。")
+        validation[ppe_key].update(validate_alpha_channel(ppe_path, ppe_key))
+        source_ppe_path = ppe_path
+
+        item_parameters = {**task.parameters, **item}
+        standard = resolve_print_standard(item_parameters)
+        print_metadata: dict[str, Any] = {
+            "logo_applied": False,
+            "text_applied": False,
+            "print_standard": standard,
+        }
+        logo_source = _image_source_from_parameter(item.get("logo_image"))
+        if logo_source is not None:
+            logo_key = f"outfit_{index}_logo_image"
+            validation[logo_key] = await validate_image_source(logo_source, logo_key)
+            logo_path = _validated_image_path(validation, logo_key)
+            if logo_path is None:
+                raise ValueError(f"第 {index + 1} 件 PPE Logo 校验失败。")
+            placement_resolution = resolve_logo_placement(
+                None,
+                _manual_placement_parameters(item_parameters),
+                _helmet_view_placement_defaults(item_parameters),
+            )
+            ppe_path, printed_metadata_path = render_printed_design(
+                f"{task.jobId}-outfit-{index}-logo",
+                ppe_path,
+                logo_path,
+                **placement_resolution.render_kwargs(),
+            )
+            validate_alpha_channel(ppe_path, f"outfit_{index}_printed_ppe")
+            logo_archive_metadata = {
+                "logo_used_asset": archive_logo_asset(logo_path, "used_in_human_wearing").metadata()
+            }
+            _append_output_metadata(
+                printed_metadata_path,
+                {"print_standard": standard, **logo_archive_metadata},
+            )
+            print_metadata.update({
+                "logo_applied": True,
+                "logo_image_path": str(logo_path),
+                "printed_ppe_path": str(ppe_path),
+                "printed_ppe_metadata_path": str(printed_metadata_path),
+                **_placement_summary(printed_metadata_path),
+                **logo_archive_metadata,
+            })
+
+        print_text = str(item.get("print_text", "")).strip()
+        if print_text:
+            text_placement = resolve_logo_placement(
+                None,
+                {},
+                _helmet_view_placement_defaults(item_parameters),
+            )
+            ppe_path, text_metadata_path = render_printed_text(
+                f"{task.jobId}-outfit-{index}-text",
+                ppe_path,
+                print_text,
+                **text_placement.render_kwargs(),
+            )
+            validate_alpha_channel(ppe_path, f"outfit_{index}_text_ppe")
+            _append_output_metadata(text_metadata_path, {"print_standard": standard})
+            print_metadata.update({
+                "text_applied": True,
+                "print_text": print_text,
+                "text_metadata_path": str(text_metadata_path),
+            })
+
+        placement = resolve_human_wearing_placement(
+            str(item.get("product_name", generate_payload.product_name)),
+            str(item.get("product_category", generate_payload.product_category)),
+            item_parameters,
+        )
+        image_path, metadata_path, mask_path = render_human_wearing_design(
+            f"{task.jobId}-human-wearing-{index}",
+            current_human_path,
+            ppe_path,
+            size=generate_payload.size,
+            position_x_ratio=placement["position_x_ratio"],
+            position_y_ratio=placement["position_y_ratio"],
+            ppe_width_ratio=placement["ppe_width_ratio"],
+            opacity=placement["opacity"],
+            placement_profile=placement["placement_profile"],
+            ppe_category=placement["ppe_category"],
+            view=generate_payload.view or "front",
+            framing=generate_payload.framing or "half_body",
+            body_anchors=shared_body_anchors,
+            auto_align=not any(
+                field in placement["manual_override_fields"]
+                for field in ("position_x_ratio", "position_y_ratio", "ppe_width_ratio", "logo_width_ratio")
+            ),
+        )
+        current_human_path = image_path
+        masks.append(mask_path)
+        try:
+            wearing_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            wearing_metadata = {}
+        if shared_body_anchors is None and isinstance(wearing_metadata.get("body_anchors"), dict):
+            shared_body_anchors = dict(wearing_metadata["body_anchors"])
+        if scene_subject_reference_path is None and wearing_metadata.get("base_path"):
+            scene_subject_reference_path = Path(str(wearing_metadata["base_path"]))
+        rendered_items.append({
+            "product_name": item.get("product_name"),
             "ppe_category": placement["ppe_category"],
-            "gender": generate_payload.gender,
-            "view": generate_payload.view,
-            "framing": generate_payload.framing,
-            "human_wearing_placement_profile": placement["placement_profile"],
-            "human_wearing_manual_override_fields": placement["manual_override_fields"],
-        },
+            "product_view": item.get("product_view"),
+            "source_ppe_reference_path": str(source_ppe_path),
+            "rendered_ppe_reference_path": str(ppe_path),
+            "metadata_path": str(metadata_path),
+            "mask_path": str(mask_path),
+            "placement_profile": placement["placement_profile"],
+            "position_x_ratio": placement["position_x_ratio"],
+            "position_y_ratio": placement["position_y_ratio"],
+            "ppe_width_ratio": placement["ppe_width_ratio"],
+            "opacity": placement["opacity"],
+            "manual_override_fields": placement["manual_override_fields"],
+            **{
+                key: wearing_metadata[key]
+                for key in (
+                    "hands_visible",
+                    "feet_visible",
+                    "placements",
+                    "body_anchors",
+                    "blend",
+                    "auto_alignment_used",
+                )
+                if key in wearing_metadata
+            },
+            **print_metadata,
+        })
+
+    if not rendered_items:
+        raise ValueError("human_wearing 没有可处理的 outfit_items。")
+
+    output_dir = settings.output_dir / f"{task.jobId}-human-wearing-multi"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with Image.open(masks[0]) as source:
+        combined_mask = source.convert("L")
+    for extra_mask_path in masks[1:]:
+        with Image.open(extra_mask_path) as source:
+            combined_mask = ImageChops.lighter(combined_mask, source.convert("L"))
+    mask_path = output_dir / "human_wearing_mask.png"
+    combined_mask.save(mask_path, format="PNG")
+
+    scene_metadata_path: Path | None = None
+    scene_source = _image_source_from_parameter(task.parameters.get("scene_reference"))
+    if scene_source is not None:
+        validation["scene_reference"] = await validate_image_source(scene_source, "scene_reference")
+        scene_path = _validated_image_path(validation, "scene_reference")
+        if scene_path is None:
+            raise ValueError("scene_reference 校验失败。")
+        current_human_path, scene_metadata_path = render_human_in_scene(
+            f"{task.jobId}-selected-scene",
+            current_human_path,
+            scene_path,
+            view=generate_payload.view or "front",
+            framing=generate_payload.framing or "half_body",
+            subject_reference_path=scene_subject_reference_path,
+        )
+
+    first_item = rendered_items[0]
+    metadata_path = output_dir / "human_wearing_metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "engine": "pillow-multi-ppe-selected-scene-composite",
+                "generation_mode": "human_wearing",
+                "outfit_item_count": len(rendered_items),
+                "outfit_items": rendered_items,
+                "human_wearing_placement_profile": first_item["placement_profile"],
+                "ppe_category": first_item["ppe_category"],
+                "human_wearing_manual_override_fields": first_item["manual_override_fields"],
+                **{
+                    key: first_item[key]
+                    for key in (
+                        "hands_visible",
+                        "feet_visible",
+                        "placements",
+                        "body_anchors",
+                        "blend",
+                        "auto_alignment_used",
+                    )
+                    if key in first_item
+                },
+                "selected_scene_used": scene_metadata_path is not None,
+                "scene_metadata_path": str(scene_metadata_path) if scene_metadata_path else None,
+                "output_path": str(current_human_path),
+                "mask_path": str(mask_path),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
-    return image_path, {
+    return current_human_path, {
         "printed_design_used": True,
         "human_wearing_used": True,
         "generation_mode": "human_wearing",
-        "path": str(image_path),
+        "path": str(current_human_path),
         "metadata_path": str(metadata_path),
+        "mask_path": str(mask_path),
         "human_reference_path": str(human_path),
-        "ppe_reference_path": str(ppe_path),
-        "ppe_category": placement["ppe_category"],
-        "gender": generate_payload.gender,
-        "view": generate_payload.view,
-        "framing": generate_payload.framing,
-        "position_x_ratio": placement["position_x_ratio"],
-        "position_y_ratio": placement["position_y_ratio"],
-        "ppe_width_ratio": placement["ppe_width_ratio"],
-        "human_top_padding_ratio": placement["human_top_padding_ratio"],
-        "opacity": placement["opacity"],
-        "human_wearing_placement_profile": placement["placement_profile"],
-        "human_wearing_manual_override_fields": placement["manual_override_fields"],
+        "ppe_reference_path": first_item["rendered_ppe_reference_path"],
+        "source_ppe_reference_path": first_item["source_ppe_reference_path"],
+        "human_wearing_placement_profile": first_item["placement_profile"],
+        "ppe_category": first_item["ppe_category"],
+        "position_x_ratio": first_item["position_x_ratio"],
+        "position_y_ratio": first_item["position_y_ratio"],
+        "ppe_width_ratio": first_item["ppe_width_ratio"],
+        "opacity": first_item["opacity"],
+        "human_wearing_manual_override_fields": first_item["manual_override_fields"],
+        "logo_applied": first_item["logo_applied"],
+        "text_applied": first_item["text_applied"],
+        "outfit_item_count": len(rendered_items),
+        "outfit_items": rendered_items,
+        "selected_scene_used": scene_metadata_path is not None,
+        "scene_metadata_path": str(scene_metadata_path) if scene_metadata_path else None,
+        **{
+            key: first_item[key]
+            for key in (
+                "logo_image_path",
+                "printed_ppe_path",
+                "printed_ppe_metadata_path",
+                "placement_mode",
+                "placement_profile",
+                "printable_region_bounds",
+                "final_x_ratio",
+                "final_y_ratio",
+                "final_width_ratio",
+                "logo_used_asset",
+                "print_standard",
+                "print_text",
+                "text_metadata_path",
+            )
+            if key in first_item
+        },
     }, validation
 
 
@@ -538,30 +721,6 @@ def _prepare_scene_generation_foreground(
     return product_path, validation
 
 
-async def _prepare_scene_generation_reference(
-    task: GenerationTaskInput,
-    input_asset_validation: dict[str, Any] | None,
-) -> tuple[Path | None, dict[str, Any]]:
-    """Validate an optional local scene reference without freezing a formal asset role."""
-    validation = dict(input_asset_validation or {})
-    parameters = _parameters_with_input_assets(task)
-    scene_source = _image_source_from_parameter(
-        parameters.get("scene_reference") or parameters.get("scene_image")
-    )
-    if scene_source is None:
-        return None, validation
-    try:
-        validation["scene_reference"] = await validate_image_source(scene_source, "scene_reference")
-    except ImageAssetValidationError as exc:
-        combined = dict(validation)
-        combined["scene_reference"] = exc.validation_result
-        raise ImageAssetValidationError(str(exc), combined) from exc
-    scene_path = _validated_image_path(validation, "scene_reference")
-    if scene_path is None:
-        raise ValueError("scene_reference 校验失败。")
-    return scene_path, validation
-
-
 def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateRequest:
     prompt_overrides = parameters.get("prompt_overrides")
     if not isinstance(prompt_overrides, dict):
@@ -580,7 +739,6 @@ def _parameters_to_generate_request(parameters: dict[str, Any]) -> GenerateReque
         style=str(parameters.get("style", "")).strip(),
         view=str(parameters["view"]).strip() if parameters.get("view") is not None else None,
         framing=str(parameters["framing"]).strip() if parameters.get("framing") is not None else None,
-        gender=str(parameters["gender"]).strip() if parameters.get("gender") is not None else None,
         size=str(parameters.get("size", "512x512")).strip(),
         prompt_overrides=prompt_overrides,
         output_format=str(parameters.get("output_format", "png")).strip(),
@@ -644,10 +802,6 @@ def _business_extra(
     parameters = _parameters_with_input_assets(task)
     product_image_url = _image_url_from_parameter(parameters, "product_image")
     logo_image_url = _image_url_from_parameter(parameters, "logo_image")
-    scene_reference_url = (
-        _image_url_from_parameter(parameters, "scene_reference")
-        or _image_url_from_parameter(parameters, "scene_image")
-    )
     generation_mode = str(task.parameters.get("generation_mode", "")).strip() or None
     human_wearing_used = bool(printed_design and printed_design.get("human_wearing_used"))
     scene_generation_used = generation_mode == "scene_generation"
@@ -658,18 +812,9 @@ def _business_extra(
     )
     background_generated = bool(printed_design and printed_design.get("background_generated"))
     product_composited = bool(printed_design and printed_design.get("product_composited"))
-    scene_reference_used = bool(printed_design and printed_design.get("scene_reference_used"))
-    ppe_category = (
-        str(printed_design.get("ppe_category"))
-        if printed_design and printed_design.get("ppe_category")
-        else None
-    )
     product_reference_used = _validated_product_image_path(input_asset_validation) is not None
     denoise = actual_denoise
-    if denoise is None and scene_generation_used and scene_generation_strategy not in {
-        "generated_background_composite",
-        "reference_background_composite",
-    }:
+    if denoise is None and scene_generation_used and scene_generation_strategy != "generated_background_composite":
         denoise = settings.comfyui_scene_generation_denoise
     payload: dict[str, Any] = {
         "business_protocol": {
@@ -690,11 +835,6 @@ def _business_extra(
             "scene_generation_strategy": scene_generation_strategy,
             "background_generated": background_generated,
             "product_composited": product_composited,
-            "scene_reference_used": scene_reference_used,
-            "ppe_category": ppe_category,
-            "gender": str(task.parameters.get("gender", "")).strip() or None,
-            "view": str(task.parameters.get("view", "")).strip() or None,
-            "framing": str(task.parameters.get("framing", "")).strip() or None,
             "scene": str(task.parameters.get("scene", "")).strip() or None,
             "style": str(task.parameters.get("style", "")).strip() or None,
             "product_reference_used": product_reference_used,
@@ -703,7 +843,6 @@ def _business_extra(
             "image_urls": {
                 "product_image": redact_url(product_image_url),
                 "logo_image": redact_url(logo_image_url),
-                "scene_reference": redact_url(scene_reference_url),
             },
             "output": {
                 "assetKey": task.output.assetKey,
@@ -734,11 +873,6 @@ def _business_extra(
     payload["scene_generation_strategy"] = scene_generation_strategy
     payload["background_generated"] = background_generated
     payload["product_composited"] = product_composited
-    payload["scene_reference_used"] = scene_reference_used
-    payload["ppe_category"] = ppe_category
-    payload["gender"] = str(task.parameters.get("gender", "")).strip() or None
-    payload["view"] = str(task.parameters.get("view", "")).strip() or None
-    payload["framing"] = str(task.parameters.get("framing", "")).strip() or None
     payload["product_reference_used"] = product_reference_used
     payload["denoise"] = denoise
     if printed_design is not None:
@@ -979,7 +1113,6 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         "printed_design_used": False,
         "reason": "not_processed",
     }
-    scene_reference_path: Path | None = None
     record = load_task(task.jobId)
     if record is None:
         return
@@ -1000,22 +1133,12 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             )
         elif generation_mode == "scene_generation":
             generation_input_path, input_asset_validation = _prepare_scene_generation_foreground(input_asset_validation)
-            scene_reference_path, input_asset_validation = await _prepare_scene_generation_reference(
-                task, input_asset_validation
-            )
-            scene_strategy = (
-                "reference_background_composite"
-                if scene_reference_path is not None
-                else "generated_background_composite"
-            )
             printed_design = {
                 "printed_design_used": False,
-                "scene_generation_strategy": scene_strategy,
+                "scene_generation_strategy": "generated_background_composite",
                 "background_generated": False,
                 "product_composited": False,
                 "ppe_foreground_path": str(generation_input_path),
-                "scene_reference_used": scene_reference_path is not None,
-                "scene_reference_path": str(scene_reference_path) if scene_reference_path is not None else None,
             }
         else:
             generation_input_path, printed_design = _prepare_generation_input(task, input_asset_validation)
@@ -1038,46 +1161,36 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
             generation_mode=generation_mode,
             view=generate_payload.view,
             framing=generate_payload.framing,
-            gender=generate_payload.gender,
         )
         prompt = prompt_result.prompt
         generation_kwargs: dict[str, Any] = {}
         if generation_mode in {"human_wearing", "scene_generation"}:
             generation_kwargs["generation_mode"] = generation_mode
+        if generation_mode == "human_wearing" and printed_design.get("mask_path"):
+            generation_kwargs["mask_image_path"] = Path(str(printed_design["mask_path"]))
         requested_denoise = _requested_denoise(task.parameters)
         if requested_denoise is not None:
             generation_kwargs["denoise"] = requested_denoise
         if generation_mode == "scene_generation":
-            if scene_reference_path is None:
-                background_prompt = build_scene_background_prompt(
-                    scene=generate_payload.scene,
-                    style=generate_payload.style,
-                    overrides=generate_payload.prompt_overrides,
-                )
-                prompt_result = PromptBuildResult(
-                    template_id=prompt_result.template_id,
-                    selection_rule=prompt_result.selection_rule,
-                    prompt=background_prompt,
-                    view=prompt_result.view,
-                    framing=prompt_result.framing,
-                    gender=prompt_result.gender,
-                )
-                background_path, background_metadata_path, background_engine = await generate_ai_image(
-                    f"{task.jobId}-scene-background",
-                    background_prompt,
-                    generate_payload.size,
-                    generate_payload.output_format,
-                    generation_mode="scene_generation",
-                )
-                scene_strategy = "generated_background_composite"
-                background_generated = True
-                engine = f"{background_engine}+pillow"
-            else:
-                background_path = scene_reference_path
-                background_metadata_path = None
-                scene_strategy = "reference_background_composite"
-                background_generated = False
-                engine = "pillow-scene-reference-composite"
+            background_prompt = build_scene_background_prompt(
+                scene=generate_payload.scene,
+                style=generate_payload.style,
+                overrides=generate_payload.prompt_overrides,
+            )
+            prompt_result = PromptBuildResult(
+                template_id=prompt_result.template_id,
+                selection_rule=prompt_result.selection_rule,
+                prompt=background_prompt,
+                view=prompt_result.view,
+                framing=prompt_result.framing,
+            )
+            background_path, background_metadata_path, background_engine = await generate_ai_image(
+                f"{task.jobId}-scene-background",
+                background_prompt,
+                generate_payload.size,
+                generate_payload.output_format,
+                generation_mode="scene_generation",
+            )
             image_path, metadata_path = render_scene_marketing_image(
                 task.jobId,
                 background_path,
@@ -1086,23 +1199,14 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
                 product_width_ratio=float(task.parameters.get("scene_product_width_ratio", 0.55)),
                 position_x_ratio=float(task.parameters.get("position_x_ratio", 0.5)),
                 position_y_ratio=float(task.parameters.get("position_y_ratio", 0.58)),
-                strategy=scene_strategy,
-                background_generated=background_generated,
-                scene_reference_used=scene_reference_path is not None,
             )
+            engine = f"{background_engine}+pillow"
             printed_design.update(
                 {
-                    "scene_generation_strategy": scene_strategy,
-                    "background_generated": background_generated,
+                    "background_generated": True,
                     "product_composited": True,
                     "background_path": str(background_path),
-                    "background_metadata_path": (
-                        str(background_metadata_path) if background_metadata_path is not None else None
-                    ),
-                    "scene_reference_used": scene_reference_path is not None,
-                    "scene_reference_path": (
-                        str(scene_reference_path) if scene_reference_path is not None else None
-                    ),
+                    "background_metadata_path": str(background_metadata_path),
                     "path": str(image_path),
                     "metadata_path": str(metadata_path),
                 }
@@ -1188,7 +1292,6 @@ async def _run_generate_task(task_id: str, payload: GenerateRequest) -> None:
             template_id=payload.template_id,
             view=payload.view,
             framing=payload.framing,
-            gender=payload.gender,
         )
         image_path, metadata_path, engine = await generate_ai_image(
             task_id,

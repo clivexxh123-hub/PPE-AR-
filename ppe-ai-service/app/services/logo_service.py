@@ -3,7 +3,7 @@
 from collections import deque
 
 import json
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from app.core.config import ensure_storage_dirs, settings
 
@@ -16,28 +16,18 @@ _POSITION_RATIOS = {
     "bottom-right": (1.0, 1.0),
 }
 
-# Local semantic profiles are relative to detected product bounds, never fixed
-# fixture pixels.  ``position`` remains the transport field, so this does not
-# freeze a new back-end contract while still allowing database-backed images.
+# These local profiles anchor artwork to the detected product bounds instead of
+# to the complete input canvas.  They deliberately use the existing
+# ``position`` field so no new back-end task contract is introduced.
 _PRINT_PROFILES = {
-    "front": ("helmet_front_print_center", "helmet-view-profile", 0.50, 0.42, 0.56, 0.30, 0.28),
-    "helmet-front-center": ("helmet_front_print_center", "helmet-view-profile", 0.50, 0.42, 0.56, 0.30, 0.28),
-    "back": ("helmet_back_print_center", "helmet-view-profile", 0.50, 0.40, 0.56, 0.30, 0.28),
-    "helmet-back-center": ("helmet_back_print_center", "helmet-view-profile", 0.50, 0.40, 0.56, 0.30, 0.28),
-    "left": ("helmet_left_print_center", "helmet-view-profile", 0.50, 0.43, 0.58, 0.30, 0.28),
-    "helmet-left-center": ("helmet_left_print_center", "helmet-view-profile", 0.50, 0.43, 0.58, 0.30, 0.28),
-    "right": ("helmet_right_print_center", "helmet-view-profile", 0.50, 0.43, 0.58, 0.30, 0.28),
-    "helmet-right-center": ("helmet_right_print_center", "helmet-view-profile", 0.50, 0.43, 0.58, 0.30, 0.28),
-    "front_left_chest": ("vest_front_left_chest", "vest-region-profile", 0.68, 0.30, 0.28, 0.22, 0.20),
-    "front-left-chest": ("vest_front_left_chest", "vest-region-profile", 0.68, 0.30, 0.28, 0.22, 0.20),
-    "front_right_chest": ("vest_front_right_chest", "vest-region-profile", 0.32, 0.30, 0.28, 0.22, 0.20),
-    "front-right-chest": ("vest_front_right_chest", "vest-region-profile", 0.32, 0.30, 0.28, 0.22, 0.20),
-    "back_upper": ("vest_back_upper", "vest-region-profile", 0.50, 0.24, 0.64, 0.20, 0.34),
-    "back-upper": ("vest_back_upper", "vest-region-profile", 0.50, 0.24, 0.64, 0.20, 0.34),
-    "back_middle": ("vest_back_middle", "vest-region-profile", 0.50, 0.50, 0.68, 0.22, 0.36),
-    "back-middle": ("vest_back_middle", "vest-region-profile", 0.50, 0.50, 0.68, 0.22, 0.36),
-    "back_lower": ("vest_back_lower", "vest-region-profile", 0.50, 0.75, 0.62, 0.20, 0.32),
-    "back-lower": ("vest_back_lower", "vest-region-profile", 0.50, 0.75, 0.62, 0.20, 0.32),
+    # name, center-x, center-y, width/product-width, max-height/product-height
+    "front": ("helmet_front_print_center", 0.50, 0.42, 0.22, 0.26),
+    "helmet-front-center": ("helmet_front_print_center", 0.50, 0.42, 0.22, 0.26),
+    "back": ("helmet_back_print_center", 0.50, 0.40, 0.22, 0.26),
+    "helmet-back-center": ("helmet_back_print_center", 0.50, 0.40, 0.22, 0.26),
+    "helmet-side-center": ("helmet_side_print_center", 0.50, 0.47, 0.24, 0.25),
+    "vest-front-left-chest": ("vest_front_left_chest", 0.31, 0.30, 0.16, 0.18),
+    "vest-back-center": ("vest_back_center", 0.50, 0.38, 0.42, 0.35),
 }
 
 
@@ -76,25 +66,12 @@ def _resolve_logo_placement(
     position_x_ratio: float | None,
     position_y_ratio: float | None,
     logo_width_ratio: float | None,
-) -> tuple[
-    Image.Image,
-    int,
-    int,
-    float,
-    float,
-    float,
-    str,
-    str | None,
-    dict[str, int] | None,
-    dict[str, int],
-]:
+) -> tuple[Image.Image, int, int, float, float, float, str, str | None, dict[str, int] | None]:
     placement_profile: str | None = None
-    profile_mode: str | None = None
     profile_x_ratio: float | None = None
     profile_y_ratio: float | None = None
-    profile_region_width_ratio: float | None = None
-    profile_region_height_ratio: float | None = None
-    profile_artwork_width_ratio: float | None = None
+    profile_width_ratio: float | None = None
+    profile_max_height_ratio: float | None = None
     if position is not None:
         normalized_position = position.strip().lower()
         if normalized_position and normalized_position != "auto":
@@ -102,12 +79,10 @@ def _resolve_logo_placement(
             if profile is not None:
                 (
                     placement_profile,
-                    profile_mode,
                     profile_x_ratio,
                     profile_y_ratio,
-                    profile_region_width_ratio,
-                    profile_region_height_ratio,
-                    profile_artwork_width_ratio,
+                    profile_width_ratio,
+                    profile_max_height_ratio,
                 ) = profile
             else:
                 if normalized_position not in _POSITION_RATIOS:
@@ -120,21 +95,33 @@ def _resolve_logo_placement(
 
     placement_mode = "auto" if position_x_ratio is None and position_y_ratio is None and logo_width_ratio is None else "manual"
     if placement_profile is not None and position_x_ratio is None and position_y_ratio is None:
-        placement_mode = str(profile_mode)
+        placement_mode = (
+            "helmet-view-profile"
+            if placement_profile.startswith("helmet_")
+            else "product-print-profile"
+        )
     bounds = _foreground_bounds(base)
     left, top, right, bottom = bounds
     product_width = max(1, right - left)
     product_height = max(1, bottom - top)
     margin = max(2, round(min(base.width, base.height) * 0.03))
 
-    if logo_width_ratio is None:
-        artwork_width_ratio = profile_artwork_width_ratio if profile_artwork_width_ratio is not None else 0.28
-        final_width_ratio = min(0.40, max(0.08, product_width / base.width * artwork_width_ratio))
+    if logo_width_ratio is None and placement_profile is not None:
+        final_width_ratio = float(profile_width_ratio or 0.22)
+        target_width = max(1, round(product_width * final_width_ratio))
+    elif logo_width_ratio is None:
+        final_width_ratio = min(0.35, max(0.10, product_width / base.width * 0.28))
+        target_width = max(1, round(base.width * final_width_ratio))
     else:
         final_width_ratio = float(logo_width_ratio)
-    target_width = max(1, round(base.width * final_width_ratio))
+        target_width = max(1, round(base.width * final_width_ratio))
     target_width = min(target_width, max(1, base.width - margin * 2))
     target_height = max(1, round(logo.height * target_width / logo.width))
+    if placement_profile is not None and profile_max_height_ratio is not None:
+        max_profile_height = max(1, round(product_height * profile_max_height_ratio))
+        if target_height > max_profile_height:
+            target_height = max_profile_height
+            target_width = max(1, round(logo.width * target_height / logo.height))
     if target_height > max(1, base.height - margin * 2):
         target_height = max(1, base.height - margin * 2)
         target_width = max(1, round(logo.width * target_height / logo.height))
@@ -147,40 +134,26 @@ def _resolve_logo_placement(
     max_x = max(min_x, available_x - margin)
     max_y = max(min_y, available_y - margin)
     printable_region_bounds: dict[str, int] | None = None
-    product_bounds = {"left": left, "top": top, "right": right, "bottom": bottom}
     if placement_profile is not None:
-        region_width = max(1, round(product_width * float(profile_region_width_ratio)))
-        region_height = max(1, round(product_height * float(profile_region_height_ratio)))
-        region_center_x = left + product_width * float(profile_x_ratio)
-        region_center_y = top + product_height * float(profile_y_ratio)
-        region_left = _clamp(round(region_center_x - region_width / 2), left, max(left, right - region_width))
-        region_top = _clamp(round(region_center_y - region_height / 2), top, max(top, bottom - region_height))
-        region_right = min(right, region_left + region_width)
-        region_bottom = min(bottom, region_top + region_height)
-        printable_region_bounds = {
-            "left": region_left,
-            "top": region_top,
-            "right": region_right,
-            "bottom": region_bottom,
-        }
-        profile_margin = max(1, min(margin, region_width // 10, region_height // 10))
-        profile_min_x = max(min_x, region_left + profile_margin)
-        profile_max_x = min(max_x, region_right - logo.width - profile_margin)
-        profile_min_y = max(min_y, region_top + profile_margin)
-        profile_max_y = min(max_y, region_bottom - logo.height - profile_margin)
+        profile_margin = max(1, min(margin, product_width // 8, product_height // 8))
+        profile_min_x = max(min_x, left + profile_margin)
+        profile_max_x = min(max_x, right - logo.width - profile_margin)
+        profile_min_y = max(min_y, top + profile_margin)
+        profile_max_y = min(max_y, bottom - logo.height - profile_margin)
+        printable_region_bounds = {"left": left, "top": top, "right": right, "bottom": bottom}
     else:
         profile_min_x, profile_max_x = min_x, max_x
         profile_min_y, profile_max_y = min_y, max_y
 
     if position_x_ratio is None and placement_profile is not None:
-        centered_x = round((printable_region_bounds["left"] + printable_region_bounds["right"] - logo.width) / 2)
+        centered_x = round(left + product_width * float(profile_x_ratio) - logo.width / 2)
         x = _clamp(centered_x, profile_min_x, max(profile_min_x, profile_max_x))
     elif position_x_ratio is None:
         x = _clamp(round(left + product_width / 2 - logo.width / 2), min_x, max_x)
     else:
         x = _clamp(round((base.width - logo.width) * float(position_x_ratio)), min_x, max_x)
     if position_y_ratio is None and placement_profile is not None:
-        centered_y = round((printable_region_bounds["top"] + printable_region_bounds["bottom"] - logo.height) / 2)
+        centered_y = round(top + product_height * float(profile_y_ratio) - logo.height / 2)
         y = _clamp(centered_y, profile_min_y, max(profile_min_y, profile_max_y))
     elif position_y_ratio is None:
         y = _clamp(round(top + product_height * 0.32 - logo.height / 2), min_y, max_y)
@@ -199,7 +172,6 @@ def _resolve_logo_placement(
         placement_mode,
         placement_profile,
         printable_region_bounds,
-        product_bounds,
     )
 
 def render_printed_design(
@@ -239,6 +211,12 @@ def render_printed_design(
     except OSError as exc:
         raise ValueError(f"Unable to read image input: {exc}") from exc
 
+    source_logo_width, source_logo_height = logo.size
+    visible_logo_bounds = logo.getchannel("A").point(lambda value: 255 if value > 8 else 0).getbbox()
+    if visible_logo_bounds:
+        logo = logo.crop(visible_logo_bounds)
+    visible_logo_width, visible_logo_height = logo.size
+
     (
         logo,
         x,
@@ -249,7 +227,6 @@ def render_printed_design(
         placement_mode,
         placement_profile,
         printable_region_bounds,
-        product_bounds,
     ) = _resolve_logo_placement(
         base,
         logo,
@@ -263,6 +240,9 @@ def render_printed_design(
         logo.putalpha(alpha)
 
     base.alpha_composite(logo, (x, y))
+    product_left, product_top, product_right, product_bottom = _foreground_bounds(base)
+    product_width = max(1, product_right - product_left)
+    product_height = max(1, product_bottom - product_top)
 
     output_dir = settings.output_dir / task_id
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -281,10 +261,11 @@ def render_printed_design(
         "placement_mode": placement_mode,
         "placement_profile": placement_profile,
         "printable_region_bounds": printable_region_bounds,
-        "product_bounds": product_bounds,
         "final_x_ratio": final_x_ratio,
         "final_y_ratio": final_y_ratio,
         "final_width_ratio": final_width_ratio,
+        "final_product_width_ratio": logo.width / product_width,
+        "final_product_height_ratio": logo.height / product_height,
         "position_x_ratio": final_x_ratio,
         "position_y_ratio": final_y_ratio,
         "logo_width_ratio": final_width_ratio,
@@ -293,7 +274,80 @@ def render_printed_design(
         "position_y": y,
         "logo_width": logo.width,
         "logo_height": logo.height,
+        "logo_source_width": source_logo_width,
+        "logo_source_height": source_logo_height,
+        "logo_visible_bounds": list(visible_logo_bounds) if visible_logo_bounds else None,
+        "logo_visible_width": visible_logo_width,
+        "logo_visible_height": visible_logo_height,
+        "logo_transparent_padding_trimmed": bool(
+            visible_logo_bounds
+            and visible_logo_bounds != (0, 0, source_logo_width, source_logo_height)
+        ),
     }
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    return image_path, metadata_path
+
+
+def _print_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    candidates = (
+        Path("C:/Windows/Fonts/msyhbd.ttc"),
+        Path("C:/Windows/Fonts/msyh.ttc"),
+        Path("C:/Windows/Fonts/simhei.ttf"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return ImageFont.truetype(str(candidate), size=size)
+    return ImageFont.load_default()
+
+
+def render_printed_text(
+    task_id: str,
+    base_path: Path,
+    print_text: str,
+    *,
+    position: str | None = None,
+    position_x_ratio: float | None = None,
+    position_y_ratio: float | None = None,
+    logo_width_ratio: float | None = None,
+    opacity: float = 1.0,
+) -> tuple[Path, Path]:
+    """Render exact customer text before diffusion so spelling remains stable."""
+    text = str(print_text).strip()[:16]
+    if not text:
+        raise ValueError("print_text cannot be blank.")
+    ensure_storage_dirs()
+    output_dir = settings.output_dir / task_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    font = _print_font(112)
+    probe = Image.new("RGBA", (8, 8), (0, 0, 0, 0))
+    bounds = ImageDraw.Draw(probe).textbbox((0, 0), text, font=font, stroke_width=1)
+    width = max(1, bounds[2] - bounds[0])
+    height = max(1, bounds[3] - bounds[1])
+    artwork = Image.new("RGBA", (width + 24, height + 24), (0, 0, 0, 0))
+    ImageDraw.Draw(artwork).text(
+        (12 - bounds[0], 12 - bounds[1]),
+        text,
+        font=font,
+        fill=(20, 72, 47, 255),
+        stroke_width=1,
+        stroke_fill=(255, 255, 255, 180),
+    )
+    artwork_path = output_dir / "print_text_artwork.png"
+    artwork.save(artwork_path, format="PNG")
+    image_path, metadata_path = render_printed_design(
+        task_id,
+        base_path,
+        artwork_path,
+        position=position,
+        position_x_ratio=position_x_ratio,
+        position_y_ratio=position_y_ratio,
+        logo_width_ratio=logo_width_ratio,
+        opacity=opacity,
+    )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.update({"print_text": text, "text_rendered_deterministically": True})
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     return image_path, metadata_path
 

@@ -41,6 +41,26 @@ const imageTypes = [
     label: "详情图",
     value: "detail_image",
     accept: "image/jpeg,image/png,image/webp"
+  },
+  {
+    label: "正面印刷底图",
+    value: "view_front",
+    accept: "image/jpeg,image/png,image/webp"
+  },
+  {
+    label: "背面印刷底图",
+    value: "view_back",
+    accept: "image/jpeg,image/png,image/webp"
+  },
+  {
+    label: "左侧印刷底图",
+    value: "view_left",
+    accept: "image/jpeg,image/png,image/webp"
+  },
+  {
+    label: "右侧印刷底图",
+    value: "view_right",
+    accept: "image/jpeg,image/png,image/webp"
   }
 ]
 
@@ -134,7 +154,7 @@ function fileUrl(file) {
     <div class="section-heading">
       <div>
         <h2>商品图片</h2>
-        <p>上传主图、白底图、场景图和详情图</p>
+        <p>上传主图、白底图及明确标注的前/后/左/右印刷底图；缺面不会由其他图片冒充</p>
       </div>
     </div>
 
