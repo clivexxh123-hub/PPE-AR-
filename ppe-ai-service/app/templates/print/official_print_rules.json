@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "unit": "mm",
+  "sources": [
+    "LOGO标识印刷位置标准.pdf",
+    "安全帽印刷尺寸效果图(1).pdf",
+    "帽子产品名称及尺寸（新）(1).xlsx",
+    "马甲款式及图片尺寸（新）(1).xls"
+  ],
+  "product_rules": [
+    {
+      "product_type": "helmet",
+      "product_model": "P6",
+      "aliases": ["豪华一筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 50], "maximum": [80, 58]}, "logo_horizontal": {"recommended": [80, 35], "maximum": [90, 40]}}, "back": {"logo_vertical": {"recommended": [70, 45], "maximum": null}, "logo_horizontal": {"recommended": [90, 40], "maximum": null}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "T8",
+      "aliases": ["高档一筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [75, 55], "maximum": [80, 62]}, "logo_horizontal": {"recommended": [80, 40], "maximum": [100, 45]}}, "back": {"logo_vertical": {"recommended": [70, 45], "maximum": null}, "logo_horizontal": {"recommended": [90, 40], "maximum": null}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "T6",
+      "aliases": ["高档圆筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [75, 55], "maximum": [80, 62]}, "logo_horizontal": {"recommended": [80, 40], "maximum": [100, 45]}}, "back": {"logo_vertical": {"recommended": [70, 45], "maximum": null}, "logo_horizontal": {"recommended": [90, 40], "maximum": null}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "T5",
+      "aliases": ["高档三筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 58], "maximum": [80, 65]}, "logo_horizontal": {"recommended": [90, 35], "maximum": [100, 40]}}, "back": {"logo_vertical": {"recommended": [60, 25], "maximum": [80, 30]}, "logo_horizontal": {"recommended": [90, 25], "maximum": [100, 30]}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "P5",
+      "aliases": ["豪华三筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 58], "maximum": [80, 65]}, "logo_horizontal": {"recommended": [90, 35], "maximum": [100, 45]}}, "back": {"logo_vertical": {"recommended": [70, 45], "maximum": null}, "logo_horizontal": {"recommended": [90, 35], "maximum": null}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "P5-reflective",
+      "aliases": ["反光豪华三筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 58], "maximum": [80, 65]}, "logo_horizontal": {"recommended": [90, 35], "maximum": [100, 40]}}, "back": {"logo_vertical": {"recommended": [70, 18], "maximum": null}, "logo_horizontal": {"recommended": [90, 18], "maximum": null}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "T5-reflective",
+      "aliases": ["反光高档三筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 58], "maximum": [80, 65]}, "logo_horizontal": {"recommended": [90, 35], "maximum": [100, 40]}}, "back": {"logo_vertical": {"recommended": [70, 20], "maximum": null}, "logo_horizontal": {"recommended": [90, 20], "maximum": null}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "T7",
+      "aliases": ["高档五筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 50], "maximum": [80, 55]}, "logo_horizontal": {"recommended": [90, 30], "maximum": [100, 40]}}, "back": {"logo_vertical": {"recommended": [70, 20], "maximum": [80, 30]}, "logo_horizontal": {"recommended": [80, 20], "maximum": [100, 25]}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "T7-reflective",
+      "aliases": ["反光高档五筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 55], "maximum": [90, 60]}, "logo_horizontal": {"recommended": [90, 35], "maximum": [100, 40]}}, "back": {"logo_vertical": {"recommended": [70, 20], "maximum": null}, "logo_horizontal": {"recommended": [90, 20], "maximum": null}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "P7",
+      "aliases": ["豪华五筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 55], "maximum": [90, 60]}, "logo_horizontal": {"recommended": [90, 30], "maximum": [100, 40]}}, "back": {"logo_vertical": {"recommended": [70, 35], "maximum": [80, 45]}, "logo_horizontal": {"recommended": [90, 30], "maximum": [100, 40]}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "P7-reflective",
+      "aliases": ["反光豪华五筋"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 55], "maximum": [80, 60]}, "logo_horizontal": {"recommended": [80, 35], "maximum": [90, 40]}}, "back": {"logo_vertical": {"recommended": [70, 20], "maximum": null}, "logo_horizontal": {"recommended": [90, 20], "maximum": null}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "P9-T3",
+      "aliases": ["P9", "T3", "欧式透气", "高档欧式透气"],
+      "views": {"front": {"logo_vertical": {"recommended": [65, 50], "maximum": [68, 58]}, "logo_horizontal": {"recommended": [65, 30], "maximum": [80, 35]}}, "back": {"logo_vertical": {"recommended": [70, 45], "maximum": null}, "logo_horizontal": {"recommended": [80, 35], "maximum": null}}, "left": {"logo_vertical": {"recommended": [70, 40], "maximum": [80, 45]}, "logo_horizontal": {"recommended": [90, 20], "maximum": null}}, "right": {"copy_from": "left"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "B12",
+      "aliases": ["高抗冲V型透气"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 50], "maximum": [80, 55]}, "logo_horizontal": {"recommended": [80, 35], "maximum": [90, 40]}}, "back": {"copy_from": "front"}, "left": {"logo_vertical": {"recommended": [100, 30], "maximum": null}}, "right": {"copy_from": "left"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "B11-B20-B10",
+      "aliases": ["B11", "B20", "B10", "高抗冲圆盔型"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 58], "maximum": [80, 68]}, "logo_horizontal": {"recommended": [90, 35], "maximum": [100, 45]}}, "back": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "B33",
+      "aliases": ["高档V型玻璃钢"],
+      "views": {"front": {"logo_vertical": {"recommended": [80, 55], "maximum": [90, 65]}, "logo_horizontal": {"recommended": [90, 40], "maximum": [100, 45]}}, "back": {"copy_from": "front"}, "left": {"logo_vertical": {"recommended": [90, 30], "maximum": [100, 40]}}, "right": {"copy_from": "left"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "T2",
+      "aliases": ["高档V形透气"],
+      "views": {"front": {"logo_vertical": {"recommended": [75, 55], "maximum": [90, 62]}, "logo_horizontal": {"recommended": [90, 35], "maximum": [100, 45]}}, "back": {"logo_vertical": {"recommended": [75, 40], "maximum": null}, "logo_horizontal": {"recommended": [90, 35], "maximum": null}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "P1-P2-P3-P8",
+      "aliases": ["P1", "P2", "P3", "P8", "国标V形"],
+      "views": {"front": {"logo_vertical": {"recommended": [75, 55], "maximum": [90, 58]}, "logo_horizontal": {"recommended": [90, 40], "maximum": [100, 45]}}, "back": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "P10",
+      "aliases": ["豪华V型透气"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 50], "maximum": [90, 58]}, "logo_horizontal": {"recommended": [90, 40], "maximum": [100, 45]}}, "back": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "T1",
+      "aliases": ["高档国标加厚"],
+      "views": {"front": {"logo_vertical": {"recommended": [80, 55], "maximum": [90, 60]}, "logo_horizontal": {"recommended": [90, 40], "maximum": [100, 45]}}, "back": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "V2",
+      "aliases": ["经典透气V型"],
+      "views": {"front": {"logo_vertical": {"recommended": [70, 50], "maximum": [80, 55]}, "logo_horizontal": {"recommended": [80, 35], "maximum": [90, 40]}}, "back": {"logo_vertical": {"recommended": [70, 40], "maximum": null}, "logo_horizontal": {"recommended": [80, 20], "maximum": null}}, "left": {"copy_from": "front"}, "right": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "helmet",
+      "product_model": "B32",
+      "aliases": ["烤漆高档V型玻璃钢"],
+      "views": {"front": {"logo_vertical": {"recommended": [75, 55], "maximum": [90, 65]}, "logo_horizontal": {"recommended": [90, 40], "maximum": [100, 45]}}, "back": {"copy_from": "front"}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "环卫马甲",
+      "aliases": [],
+      "views": {"front": {"front": {"recommended": [100, 70], "maximum": [120, 100]}}, "back": {"back": {"recommended": [250, 120], "maximum": [300, 150]}}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "多功能渔网款",
+      "aliases": [],
+      "views": {"front": {"front": {"recommended": [280, 60], "maximum": [350, 70]}}, "back": {"back": {"recommended": [200, 100], "maximum": [220, 120]}}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "基础款",
+      "aliases": [],
+      "views": {"front": {"front": {"recommended": [100, 70], "maximum": [120, 100]}}, "back": {"back": {"recommended": [230, 200], "maximum": [300, 240]}}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "国标高亮光拉链加强肩带款",
+      "aliases": ["国标高亮光拉链加强", "肩带款"],
+      "views": {"front": {"front": {"recommended": [90, 70], "maximum": [100, 90]}}, "back": {"back": {"recommended": [200, 180], "maximum": [240, 240]}}, "waist": {"upper_lower_waist": {"recommended": [300, 50], "maximum": [350, 70]}}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "国标高亮光拉链款",
+      "aliases": [],
+      "views": {"front": {"front": {"recommended": [100, 80], "maximum": [140, 100]}}, "back": {"back": {"recommended": [230, 200], "maximum": [300, 240]}}, "waist": {"upper_lower_waist": {"recommended": [300, 50], "maximum": [380, 70]}}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "升级加厚多口袋款",
+      "aliases": ["透气款", "不透气款"],
+      "views": {"front": {"front": {"recommended": [90, 70], "maximum": [100, 90]}}, "back": {"back": {"recommended": [220, 200], "maximum": [260, 240]}}, "waist": {"upper_lower_waist": {"recommended": [300, 50], "maximum": [350, 70]}}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "双拼口袋款",
+      "aliases": ["透气款", "不透气款"],
+      "views": {"front": {"front": {"recommended": [90, 70], "maximum": [110, 90]}}, "back": {"back": {"recommended": [220, 200], "maximum": [260, 240]}}, "waist": {"upper_lower_waist": {"recommended": [300, 50], "maximum": [350, 70]}}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "志愿者透气口袋款",
+      "aliases": ["志原者透气口袋款"],
+      "views": {"front": {"front": {"recommended": [120, 90], "maximum": [140, 120]}}, "back": {"back": {"recommended": [250, 150], "maximum": [300, 190]}}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "志愿者不透气款",
+      "aliases": ["志原者不透气款"],
+      "views": {"front": {"front": {"recommended": [120, 90], "maximum": [140, 120]}}, "back": {"back": {"recommended": [250, 240], "maximum": [300, 270]}}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "晶格条口袋款",
+      "aliases": [],
+      "views": {"front": {"front": {"recommended": [70, 40], "maximum": null}}, "back": {"back": {"recommended": [180, 100], "maximum": [220, 140]}}}
+    },
+    {
+      "product_type": "workwear",
+      "product_model": "standard_workwear",
+      "aliases": ["工服", "春秋装"],
+      "views": {"front": {"left_chest_pocket_upper": {"recommended": [100, 88], "maximum": null}}, "back": {"back_upper_center": {"recommended": [200, 200], "maximum": null}}}
+    },
+    {
+      "product_type": "vest",
+      "product_model": "reflective_vest_standard",
+      "aliases": ["反光背心", "救生衣"],
+      "views": {"front": {"left_chest_pocket_upper": {"recommended": [100, 88], "maximum": null}, "front_label": {"recommended": [76, 60], "maximum": null}}, "back": {"back_upper_center": {"recommended": [250, 220], "maximum": null}, "back_label": {"recommended": [150, 118], "maximum": null}}}
+    }
+  ]
+}

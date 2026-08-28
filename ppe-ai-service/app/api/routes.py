@@ -17,6 +17,7 @@ from app.services.error_codes import map_exception_to_error
 from app.services.generation_engine import generate_ai_image
 from app.services.human_scene_service import render_human_in_scene
 from app.services.human_wearing_service import render_human_wearing_design, resolve_human_wearing_placement
+from app.services.helmet_print_validation import validate_helmet_print_view
 from app.services.image_asset_service import (
     ImageAssetValidationError,
     RetryableImageAssetError,
@@ -33,7 +34,7 @@ from app.services.prompt_templates import (
     build_managed_prompt,
     build_scene_background_prompt,
 )
-from app.services.print_standard_service import resolve_print_standard
+from app.services.print_standard_service import resolve_official_print_standard, resolve_print_standard
 from app.services.scene_composite_service import render_scene_marketing_image
 from app.services.storage_service import StorageUploadResult, upload_result
 from app.services.task_store import create_task, load_task, load_task_payload, save_task, to_response
@@ -310,6 +311,10 @@ def _placement_summary(metadata_path: Path) -> dict[str, Any]:
             "final_x_ratio",
             "final_y_ratio",
             "final_width_ratio",
+            "logo_color_similarity",
+            "logo_color_collision",
+            "logo_color_adjustment",
+            "official_print_rule",
         )
         if key in metadata
     }
@@ -335,6 +340,19 @@ def _helmet_view_placement_defaults(parameters: dict[str, Any]) -> dict[str, Any
 def _manual_placement_parameters(parameters: dict[str, Any]) -> dict[str, Any]:
     keys = ("position", "position_x_ratio", "position_y_ratio", "logo_width_ratio", "scale", "opacity")
     return {key: parameters[key] for key in keys if parameters.get(key) is not None}
+
+
+def _official_print_context(parameters: dict[str, Any]) -> tuple[Any, float | None, dict[str, Any], dict[str, Any]]:
+    """Compose legacy placement with an optional strict official-mm rule."""
+    official_rule, pixels_per_mm = resolve_official_print_standard(parameters)
+    defaults = _helmet_view_placement_defaults(parameters)
+    if official_rule is not None:
+        defaults.update(official_rule.placement_default())
+    helmet_validation = validate_helmet_print_view(
+        parameters,
+        require_declared_brim=official_rule is not None,
+    )
+    return official_rule, pixels_per_mm, defaults, helmet_validation
 
 
 def _logo_template_metadata(resolution: LogoPlacementResolution, metadata_path: Path) -> dict[str, Any]:
@@ -383,10 +401,11 @@ def _prepare_generation_input(
         if task.parameters.get("logo_template_id") is not None
         else None
     )
+    official_rule, pixels_per_mm, placement_defaults, helmet_validation = _official_print_context(task.parameters)
     placement_resolution = resolve_logo_placement(
         template_id,
         _manual_placement_parameters(task.parameters),
-        _helmet_view_placement_defaults(task.parameters),
+        placement_defaults,
     )
     logo_archive_metadata = {"logo_used_asset": archive_logo_asset(logo_image_path, "used_in_print_render").metadata()}
     printed_design_path, printed_metadata_path = render_printed_design(
@@ -394,10 +413,15 @@ def _prepare_generation_input(
         product_image_path,
         logo_image_path,
         **placement_resolution.render_kwargs(),
+        official_print_rule=official_rule,
+        print_scale_px_per_mm=pixels_per_mm,
     )
     placement = _placement_summary(printed_metadata_path)
     template_metadata = _logo_template_metadata(placement_resolution, printed_metadata_path)
-    _append_output_metadata(printed_metadata_path, {**template_metadata, **logo_archive_metadata})
+    _append_output_metadata(
+        printed_metadata_path,
+        {**template_metadata, **logo_archive_metadata, **helmet_validation},
+    )
     return printed_design_path, {
         "printed_design_used": True,
         "path": str(printed_design_path),
@@ -407,6 +431,7 @@ def _prepare_generation_input(
         **placement,
         **template_metadata,
         **logo_archive_metadata,
+        **helmet_validation,
     }
 
 
@@ -464,10 +489,12 @@ async def _prepare_human_wearing_input(
 
         item_parameters = {**task.parameters, **item}
         standard = resolve_print_standard(item_parameters)
+        official_rule, pixels_per_mm, placement_defaults, helmet_validation = _official_print_context(item_parameters)
         print_metadata: dict[str, Any] = {
             "logo_applied": False,
             "text_applied": False,
             "print_standard": standard,
+            **helmet_validation,
         }
         logo_source = _image_source_from_parameter(item.get("logo_image"))
         if logo_source is not None:
@@ -479,13 +506,15 @@ async def _prepare_human_wearing_input(
             placement_resolution = resolve_logo_placement(
                 None,
                 _manual_placement_parameters(item_parameters),
-                _helmet_view_placement_defaults(item_parameters),
+                placement_defaults,
             )
             ppe_path, printed_metadata_path = render_printed_design(
                 f"{task.jobId}-outfit-{index}-logo",
                 ppe_path,
                 logo_path,
                 **placement_resolution.render_kwargs(),
+                official_print_rule=official_rule,
+                print_scale_px_per_mm=pixels_per_mm,
             )
             validate_alpha_channel(ppe_path, f"outfit_{index}_printed_ppe")
             logo_archive_metadata = {
@@ -493,7 +522,7 @@ async def _prepare_human_wearing_input(
             }
             _append_output_metadata(
                 printed_metadata_path,
-                {"print_standard": standard, **logo_archive_metadata},
+                {"print_standard": standard, **helmet_validation, **logo_archive_metadata},
             )
             print_metadata.update({
                 "logo_applied": True,
@@ -509,7 +538,7 @@ async def _prepare_human_wearing_input(
             text_placement = resolve_logo_placement(
                 None,
                 {},
-                _helmet_view_placement_defaults(item_parameters),
+                placement_defaults,
             )
             ppe_path, text_metadata_path = render_printed_text(
                 f"{task.jobId}-outfit-{index}-text",
@@ -1017,20 +1046,26 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
             base_path = _validated_image_path(input_asset_validation, "base_image")
             if base_path is None:
                 raise ValueError("base_image 校验失败。")
+            official_rule, pixels_per_mm, placement_defaults, helmet_validation = _official_print_context(task.parameters)
             placement_resolution = resolve_logo_placement(
                 logo_payload.template_id,
                 _manual_placement_parameters(logo_payload.model_dump()),
-                _helmet_view_placement_defaults(task.parameters),
+                placement_defaults,
             )
             image_path, metadata_path = render_printed_design(
                 task.jobId,
                 base_path,
                 logo_path,
                 **placement_resolution.render_kwargs(),
+                official_print_rule=official_rule,
+                print_scale_px_per_mm=pixels_per_mm,
             )
             archive_metadata["logo_used_asset"] = archive_logo_asset(logo_path, "used_in_print_render").metadata()
             template_metadata = _logo_template_metadata(placement_resolution, metadata_path)
-            _append_output_metadata(metadata_path, {**template_metadata, **archive_metadata})
+            _append_output_metadata(
+                metadata_path,
+                {**template_metadata, **archive_metadata, **helmet_validation},
+            )
             printed_design = {
                 "printed_design_used": True,
                 "path": str(image_path),
@@ -1040,6 +1075,7 @@ async def _run_business_logo_task(task: GenerationTaskInput) -> None:
                 **_placement_summary(metadata_path),
                 **template_metadata,
                 **archive_metadata,
+                **helmet_validation,
             }
             completion_message = "业务印刷设计图已生成。"
         else:
@@ -1335,19 +1371,26 @@ async def _run_logo_task(task_id: str, payload: LogoPlaceRequest, operation: str
                 archive_metadata["logo_transparent_asset"] = archive_logo_asset(image_path, "transparent").metadata()
                 _append_output_metadata(metadata_path, archive_metadata)
             else:
+                official_rule, pixels_per_mm, placement_defaults, helmet_validation = _official_print_context(payload.model_dump())
                 placement_resolution = resolve_logo_placement(
                     payload.template_id,
                     _manual_placement_parameters(payload.model_dump()),
+                    placement_defaults,
                 )
                 image_path, metadata_path = render_printed_design(
                     task_id,
                     base_path,
                     logo_path,
                     **placement_resolution.render_kwargs(),
+                    official_print_rule=official_rule,
+                    print_scale_px_per_mm=pixels_per_mm,
                 )
                 template_metadata = _logo_template_metadata(placement_resolution, metadata_path)
                 archive_metadata["logo_used_asset"] = archive_logo_asset(logo_path, "used_in_print_render").metadata()
-                _append_output_metadata(metadata_path, {**template_metadata, **archive_metadata})
+                _append_output_metadata(
+                    metadata_path,
+                    {**template_metadata, **archive_metadata, **helmet_validation},
+                )
         else:
             image_path, metadata_path = normalize_logo(task_id, logo_path, payload.output_format)
             archive_metadata["logo_transparent_asset"] = archive_logo_asset(image_path, "transparent").metadata()

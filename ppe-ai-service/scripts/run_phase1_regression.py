@@ -78,6 +78,7 @@ def main() -> int:
                 "scripts/human_wearing_model_anchor_audit.py",
                 "scripts/logo_archive_smoke_test.py",
                 "scripts/runtime_metadata_smoke_test.py",
+                "scripts/client_print_rules_smoke_test.py",
             ],
         ),
         Check("/ai/generate mock 回归", [PYTHON, "scripts/api_smoke_test.py"], engine="mock"),
@@ -101,6 +102,7 @@ def main() -> int:
         Check("标准模特人体锚点审计", [PYTHON, "scripts/human_wearing_model_anchor_audit.py"], engine="mock"),
         Check("Logo 素材归档 MVP", [PYTHON, "scripts/logo_archive_smoke_test.py"], engine="mock"),
         Check("运行引擎与 denoise metadata", [PYTHON, "scripts/runtime_metadata_smoke_test.py"], engine="mock"),
+        Check("客户官方印刷规则与撞色", [PYTHON, "scripts/client_print_rules_smoke_test.py"], engine="mock"),
         Check("Git diff 检查", ["git", "diff", "--check", "--", "."]),
         Check("scene_generation regression", [PYTHON, "scripts/scene_generation_smoke_test.py"], engine="mock"),
     ]

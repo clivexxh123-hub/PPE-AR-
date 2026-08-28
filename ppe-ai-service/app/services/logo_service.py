@@ -6,6 +6,8 @@ import json
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from app.core.config import ensure_storage_dirs, settings
+from app.services.official_print_rules import OfficialPrintRule, contained_logo_size
+from app.services.print_color_service import apply_logo_collision_rule
 
 
 _POSITION_RATIOS = {
@@ -66,6 +68,8 @@ def _resolve_logo_placement(
     position_x_ratio: float | None,
     position_y_ratio: float | None,
     logo_width_ratio: float | None,
+    official_print_rule: OfficialPrintRule | None = None,
+    print_scale_px_per_mm: float | None = None,
 ) -> tuple[Image.Image, int, int, float, float, float, str, str | None, dict[str, int] | None]:
     placement_profile: str | None = None
     profile_x_ratio: float | None = None
@@ -106,7 +110,29 @@ def _resolve_logo_placement(
     product_height = max(1, bottom - top)
     margin = max(2, round(min(base.width, base.height) * 0.03))
 
-    if logo_width_ratio is None and placement_profile is not None:
+    if official_print_rule is not None:
+        if print_scale_px_per_mm is None or print_scale_px_per_mm <= 0:
+            raise ValueError("官方印刷规则需要有效的 print_scale_px_per_mm。")
+        if logo_width_ratio is None:
+            target_width, target_height = contained_logo_size(
+                logo.width,
+                logo.height,
+                official_print_rule.recommended_size,
+                print_scale_px_per_mm,
+            )
+        else:
+            target_width = max(1, round(base.width * float(logo_width_ratio)))
+            target_height = max(1, round(logo.height * target_width / logo.width))
+            maximum_width, maximum_height = contained_logo_size(
+                logo.width,
+                logo.height,
+                official_print_rule.maximum_size,
+                print_scale_px_per_mm,
+            )
+            if target_width > maximum_width or target_height > maximum_height:
+                target_width, target_height = maximum_width, maximum_height
+        final_width_ratio = target_width / base.width
+    elif logo_width_ratio is None and placement_profile is not None:
         final_width_ratio = float(profile_width_ratio or 0.22)
         target_width = max(1, round(product_width * final_width_ratio))
     elif logo_width_ratio is None:
@@ -115,8 +141,12 @@ def _resolve_logo_placement(
     else:
         final_width_ratio = float(logo_width_ratio)
         target_width = max(1, round(base.width * final_width_ratio))
-    target_width = min(target_width, max(1, base.width - margin * 2))
-    target_height = max(1, round(logo.height * target_width / logo.width))
+    if official_print_rule is None:
+        target_height = max(1, round(logo.height * target_width / logo.width))
+    canvas_width_limit = max(1, base.width - margin * 2)
+    if target_width > canvas_width_limit:
+        target_width = canvas_width_limit
+        target_height = max(1, round(logo.height * target_width / logo.width))
     if placement_profile is not None and profile_max_height_ratio is not None:
         max_profile_height = max(1, round(product_height * profile_max_height_ratio))
         if target_height > max_profile_height:
@@ -183,6 +213,8 @@ def render_printed_design(
     position_y_ratio: float | None = None,
     logo_width_ratio: float | None = None,
     opacity: float = 1.0,
+    official_print_rule: OfficialPrintRule | None = None,
+    print_scale_px_per_mm: float | None = None,
 ) -> tuple[Path, Path]:
     """Compose an RGBA logo onto a product image using relative coordinates."""
     ensure_storage_dirs()
@@ -234,6 +266,21 @@ def render_printed_design(
         position_x_ratio=position_x_ratio,
         position_y_ratio=position_y_ratio,
         logo_width_ratio=logo_width_ratio,
+        official_print_rule=official_print_rule,
+        print_scale_px_per_mm=print_scale_px_per_mm,
+    )
+    color_sample_bounds = {
+        "left": x,
+        "top": y,
+        "right": x + logo.width,
+        "bottom": y + logo.height,
+    }
+    logo, collision_decision = apply_logo_collision_rule(
+        base,
+        logo,
+        color_sample_bounds,
+        similarity_threshold=settings.logo_collision_similarity_threshold,
+        dark_luminance_threshold=settings.logo_collision_dark_luminance_threshold,
     )
     if float(opacity) < 1:
         alpha = logo.getchannel("A").point(lambda value: round(value * float(opacity)))
@@ -283,7 +330,21 @@ def render_printed_design(
             visible_logo_bounds
             and visible_logo_bounds != (0, 0, source_logo_width, source_logo_height)
         ),
+        "print_color_sample_bounds": color_sample_bounds,
+        **collision_decision.metadata(),
     }
+    if official_print_rule is not None:
+        metadata.update(official_print_rule.metadata())
+        metadata["official_print_rule"].update(
+            {
+                "print_scale_px_per_mm": float(print_scale_px_per_mm),
+                "actual_size": {
+                    "horizontal": round(logo.width / float(print_scale_px_per_mm), 4),
+                    "vertical": round(logo.height / float(print_scale_px_per_mm), 4),
+                    "unit": "mm",
+                },
+            }
+        )
     metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     return image_path, metadata_path
 
