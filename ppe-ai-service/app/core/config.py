@@ -57,6 +57,12 @@ class Settings(BaseModel):
     comfyui_human_wearing_blend_denoise: float = float(
         os.getenv("COMFYUI_HUMAN_WEARING_BLEND_DENOISE", "0.38")
     )
+    # A helmet refines only its brim/hairline contact band, so it needs less
+    # latent noise than fabric PPE.  Keep this category-specific to avoid
+    # changing vest/glove/boot behavior in the current release.
+    comfyui_human_wearing_helmet_denoise: float = float(
+        os.getenv("COMFYUI_HUMAN_WEARING_HELMET_DENOISE", "0.24")
+    )
     comfyui_positive_node_id: str | None = os.getenv("COMFYUI_POSITIVE_NODE_ID")
     comfyui_negative_node_id: str | None = os.getenv("COMFYUI_NEGATIVE_NODE_ID")
     comfyui_latent_node_id: str | None = os.getenv("COMFYUI_LATENT_NODE_ID")

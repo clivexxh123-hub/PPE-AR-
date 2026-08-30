@@ -1207,6 +1207,14 @@ async def _run_business_generate_task(task: GenerationTaskInput) -> None:
         requested_denoise = _requested_denoise(task.parameters)
         if requested_denoise is not None:
             generation_kwargs["denoise"] = requested_denoise
+        elif generation_mode == "human_wearing":
+            worn_categories = {
+                str(item.get("ppe_category", "")).strip().lower()
+                for item in printed_design.get("outfit_items", [])
+                if isinstance(item, dict)
+            }
+            if worn_categories == {"helmet"}:
+                generation_kwargs["denoise"] = settings.comfyui_human_wearing_helmet_denoise
         if generation_mode == "scene_generation":
             background_prompt = build_scene_background_prompt(
                 scene=generate_payload.scene,

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageChops, UnidentifiedImageError
 
 from app.core.config import ensure_storage_dirs, settings
 
@@ -137,6 +137,7 @@ def _patch_workflow(
     comfyui_mask_name: str | None = None,
     negative_prompt: str | None = None,
     denoise: float | None = None,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     width, height = _parse_size(size)
     positive_patched = False
@@ -220,7 +221,7 @@ def _patch_workflow(
             save_patched = True
 
         if "seed" in inputs and isinstance(inputs["seed"], int):
-            inputs["seed"] = random.randint(1, 2**31 - 1)
+            inputs["seed"] = random.randint(1, 2**31 - 1) if seed is None else int(seed)
 
     if not positive_patched:
         raise ComfyUIError("没有找到可写入 Prompt 的节点。请设置 COMFYUI_POSITIVE_NODE_ID 或检查工作流 JSON。")
@@ -229,6 +230,54 @@ def _patch_workflow(
     if comfyui_mask_name is not None and not mask_patched:
         raise ComfyUIError("没有找到可写入局部重绘蒙版的 LoadImage 节点。请设置 COMFYUI_MASK_NODE_ID 或检查工作流 JSON。")
     return workflow
+
+
+def _workflow_seed(workflow: dict[str, Any]) -> int | None:
+    for node in workflow.values():
+        if not isinstance(node, dict):
+            continue
+        value = node.get("inputs", {}).get("seed")
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _lock_human_wearing_unmasked_regions(
+    generated_path: Path,
+    input_path: Path,
+    mask_path: Path,
+) -> dict[str, Any]:
+    """Make the contact-only mask a real output invariant, not just metadata."""
+    with Image.open(generated_path) as source:
+        generated = source.convert("RGB")
+    with Image.open(input_path) as source:
+        original = source.convert("RGB")
+    with Image.open(mask_path) as source:
+        mask = source.convert("L")
+    if original.size != generated.size or mask.size != generated.size:
+        raise ComfyUIError("human_wearing input, mask, and output dimensions must match for core lock.")
+    # White mask pixels are the only pixels ComfyUI is permitted to alter.
+    # This preserves the P10 shell, printed design, face, shirt and background
+    # outside the explicit contact band even if a workflow node is miswired.
+    locked = Image.composite(generated, original, mask)
+    locked.save(generated_path, format="PNG")
+    # A hard-zero mask pixel is contractually immutable after the post-composite.
+    # Record the measured result so downstream metadata cannot claim protection
+    # without evidence from the actual final output.
+    unchanged_mask = mask.point(lambda value: 255 if value == 0 else 0)
+    unmasked_delta = ImageChops.multiply(
+        ImageChops.difference(locked, original).convert("L"),
+        unchanged_mask,
+    )
+    unmasked_mismatch_pixels = sum(unmasked_delta.histogram()[1:])
+    coverage = sum(mask.histogram()[128:]) / float(mask.width * mask.height)
+    return {
+        "applied": True,
+        "method": "post_composite_unmasked_input_lock",
+        "mask_coverage_ratio": round(coverage, 4),
+        "unmasked_mismatch_pixels": unmasked_mismatch_pixels,
+        "protected_regions": ["helmet_core", "eyes_face", "shirt", "body_outline", "background"],
+    }
 
 
 def _extract_first_image(history_item: dict[str, Any]) -> dict[str, str] | None:
@@ -294,6 +343,7 @@ async def generate_comfyui_image(
     mask_image_path: Path | None = None,
     generation_mode: str | None = None,
     denoise: float | None = None,
+    seed: int | None = None,
 ) -> tuple[Path, Path]:
     ensure_storage_dirs()
     output_dir = settings.output_dir / task_id
@@ -330,6 +380,8 @@ async def generate_comfyui_image(
     comfyui_mask_name: str | None = None
     input_preprocessing: dict[str, int | str] | None = None
     mask_preprocessing: dict[str, int | str] | None = None
+    masked_refinement: dict[str, Any] | None = None
+    effective_seed: int | None = None
     with tempfile.TemporaryDirectory(prefix=f"ppe-img2img-{task_id}-") as temp_dir:
         prepared_image_path: Path | None = None
         prepared_mask_path: Path | None = None
@@ -357,7 +409,9 @@ async def generate_comfyui_image(
                 comfyui_mask_name,
                 negative_prompt=negative_prompt,
                 denoise=generation_denoise,
+                seed=seed,
             )
+            effective_seed = _workflow_seed(workflow)
             queue_response = await client.post("/prompt", json={"prompt": workflow, "client_id": task_id})
             queue_response.raise_for_status()
             prompt_id = queue_response.json().get("prompt_id")
@@ -373,6 +427,16 @@ async def generate_comfyui_image(
     image_path = output_dir / f"result.{ext}"
     metadata_path = output_dir / "metadata.json"
     image_path.write_bytes(image_response.content)
+    if (
+        requested_generation_mode == "human_wearing"
+        and product_image_path is not None
+        and mask_image_path is not None
+    ):
+        masked_refinement = _lock_human_wearing_unmasked_regions(
+            image_path,
+            product_image_path,
+            mask_image_path,
+        )
 
     metadata = {
         "task_id": task_id,
@@ -391,6 +455,8 @@ async def generate_comfyui_image(
         "comfyui_base_url": settings.comfyui_base_url,
         "workflow_path": str(workflow_path),
         "denoise": generation_denoise if workflow_generation_mode == "image_to_image" else None,
+        "seed": effective_seed,
+        "masked_refinement": masked_refinement,
         "prompt_id": prompt_id,
         "prompt": prompt,
         "size": size,
