@@ -233,6 +233,11 @@ def analyze_body_anchors(image: Image.Image, *, view: str, framing: str) -> dict
     face_width = float(face.width)
     head_width = face_width * 1.32
     head_height = face_width * 1.54
+    # Face detection starts around the hairline rather than the top of the
+    # skull.  Keep these landmarks explicit so helmet placement never falls
+    # back to a generic canvas ratio.
+    head_top_y = max(subject.y0, round(face.y0 - face_width * 0.20))
+    eye_line_y = min(face.y1, round(face.y0 + face_width * 0.57))
     shoulder_y = min(image.height - 1, round(face.y0 + face_width * 1.75))
     expected_shoulder_width = face_width * 2.45
     shoulder_left = max(subject.x0, round(face.center_x - expected_shoulder_width / 2))
@@ -248,7 +253,9 @@ def analyze_body_anchors(image: Image.Image, *, view: str, framing: str) -> dict
         "face_width": round(face_width, 2),
         "head_width": round(head_width, 2),
         "head_height": round(head_height, 2),
+        "head_top_y": head_top_y,
         "hairline_y": face.y0,
+        "eye_line_y": eye_line_y,
         "shoulder_y": shoulder_y,
         "shoulder_left": shoulder_left,
         "shoulder_right": shoulder_right,
@@ -279,17 +286,42 @@ def resolve_ppe_placements(
     slight_side = view == "slight_side"
 
     if category == "helmet":
-        width = max(1, round(float(anchors["head_width"]) * 1.16))
+        # A shell is sized from the measured head width.  The front and slight
+        # side profiles are deliberately independent: side views expose less
+        # of the shell and need a small perspective offset.
+        profile = (
+            {
+                "name": "helmet_slight_side_contact_v1",
+                "width_ratio": 1.02,
+                "center_x_face_width_offset": -0.085,
+                "rotation": -4.0,
+            }
+            if slight_side
+            else {
+                "name": "helmet_front_contact_v1",
+                "width_ratio": 1.08,
+                "center_x_face_width_offset": 0.0,
+                "rotation": 0.0,
+            }
+        )
+        width = max(1, round(float(anchors["head_width"]) * profile["width_ratio"]))
         height = max(1, round(width * ppe_aspect))
-        brow_y = float(anchors["hairline_y"]) + face_width * 0.45
+        # The brim rests just above the eyes.  This gives the same anatomical
+        # target for every canvas size and avoids the old chest-sized fallback.
+        brim_y = float(anchors["eye_line_y"]) - face_width * 0.15
         return [{
             "role": "head",
-            "center_x": face_center_x + (-0.06 * face_width if slight_side else 0),
-            "center_y": brow_y - height / 2,
+            "center_x": face_center_x + profile["center_x_face_width_offset"] * face_width,
+            "center_y": brim_y - height / 2,
             "width": width,
             "height": height,
-            "rotation": -4.0 if slight_side else 0.0,
+            "rotation": profile["rotation"],
             "mirror": False,
+            "helmet_geometry_profile": profile["name"],
+            "head_top_y": anchors["head_top_y"],
+            "head_width": anchors["head_width"],
+            "eye_line_y": anchors["eye_line_y"],
+            "brim_y": round(brim_y, 2),
         }]
 
     if category == "vest":

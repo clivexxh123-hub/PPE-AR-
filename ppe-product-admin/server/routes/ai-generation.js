@@ -343,6 +343,63 @@ function productSurfaceOf(product, view) {
     return asTrimmedText(view?.surface, "ppe");
 }
 
+function metadataText(record, names) {
+    for (const name of names) {
+        const value = asTrimmedText(record?.[name]);
+        if (value) return value;
+    }
+    return null;
+}
+
+function metadataPositiveNumber(record, names) {
+    for (const name of names) {
+        const value = Number(record?.[name]);
+        if (Number.isFinite(value) && value > 0) return value;
+    }
+    return null;
+}
+
+function printRuleFields(ppeCategory, product, view) {
+    // Product details come from the catalog API.  A physical scale is only
+    // accepted with an explicit catalog calibration source; never infer it
+    // from image pixels, a filename, SKU, or static UI zone.
+    const productModel = metadataText(product, ["product_model", "model", "model_no", "model_number"]);
+    const printZone = metadataText(view, ["print_zone", "printZone"])
+        || metadataText(product, ["print_zone", "default_print_zone"]);
+    const calibrationSource = metadataText(view, ["print_scale_source", "calibration_id"])
+        || metadataText(product, ["print_scale_source", "calibration_id"]);
+    const candidateScale = metadataPositiveNumber(view, ["print_scale_px_per_mm", "pixels_per_mm", "px_per_mm"])
+        ?? metadataPositiveNumber(product, ["print_scale_px_per_mm", "pixels_per_mm", "px_per_mm"]);
+    const pixelsPerMm = calibrationSource && candidateScale ? candidateScale : null;
+    const helmetBrimDirection = metadataText(view, ["helmet_brim_direction", "brim_direction"])
+        || metadataText(product, ["helmet_brim_direction", "brim_direction"]);
+    const canUseOfficialRule = Boolean(
+        ["helmet", "vest", "workwear"].includes(ppeCategory)
+        && productModel
+        && printZone
+        && pixelsPerMm
+        && (ppeCategory !== "helmet" || helmetBrimDirection)
+    );
+    return {
+        product_type: ppeCategory,
+        product_model: productModel,
+        product_view: asTrimmedText(view?.id, "front"),
+        print_zone: printZone,
+        ...(pixelsPerMm ? { print_scale_px_per_mm: pixelsPerMm } : {}),
+        ...(helmetBrimDirection ? { helmet_brim_direction: helmetBrimDirection } : {}),
+        print_rule_status: canUseOfficialRule
+            ? "READY"
+            : (pixelsPerMm ? "WAIT_RULE_METADATA" : "WAIT_CALIBRATION"),
+        print_metadata_source: {
+            product_type: "product_catalog_category",
+            product_model: productModel ? "product_catalog" : null,
+            product_view: "product_files.face",
+            print_zone: printZone ? "catalog_view_or_product_metadata" : null,
+            print_scale_px_per_mm: pixelsPerMm ? calibrationSource : null,
+        },
+    };
+}
+
 function buildSceneDescription(scene) {
     const parts = [scene?.name, scene?.scene_name, scene?.industry]
         .map((value) => asTrimmedText(value))
@@ -373,6 +430,7 @@ function normalizeOutfitItems(body, composition) {
         const productImage = asTrimmedText(view.image, asTrimmedText(rawItem?.productImage));
         const logoImage = asTrimmedText(logo.image, asTrimmedText(logo.logo_url));
         const ppeCategory = ppeCategoryOf(product, rawItem?.ppeCategory);
+        const printRule = printRuleFields(ppeCategory, product, view);
         if (!productName) {
             const error = new Error(`第 ${index + 1} 件产品缺少名称`);
             error.statusCode = 400;
@@ -402,7 +460,8 @@ function normalizeOutfitItems(body, composition) {
             logoImage,
             ppeCategory,
             productCategory: categoryOf(product),
-            productSurface: productSurfaceOf(product, view)
+            productSurface: productSurfaceOf(product, view),
+            printRule,
         };
     });
 }
@@ -413,7 +472,7 @@ function buildBusinessTask(body, actor = null) {
     const composition = normalizeComposition(body?.composition);
     const outfitItems = normalizeOutfitItems(body, composition);
     const primaryItem = outfitItems[0];
-    const { product, view, logo, productName, productImage, logoImage, ppeCategory } = primaryItem;
+    const { product, view, logo, productName, productImage, logoImage, ppeCategory, printRule } = primaryItem;
     const humanImage = asTrimmedText(model.image, asTrimmedText(model.image_url));
     const sceneImage = asTrimmedText(scene.image, asTrimmedText(scene.image_url));
     const generationMode = asTrimmedText(body?.generationMode).toLowerCase() || (
@@ -476,11 +535,13 @@ function buildBusinessTask(body, actor = null) {
                 view_name: asTrimmedText(item.view.name, asTrimmedText(item.view.id, "正面")),
                 product_surface: item.productSurface,
                 ppe_category: item.ppeCategory,
+                ...item.printRule,
                 print_text: asTrimmedText(item.view.printText),
                 logo_name: asTrimmedText(item.logo.name, asTrimmedText(item.logo.company_name))
             }))
         } : {}),
         ...(composition || {}),
+        ...printRule,
         product_view: asTrimmedText(view.id, "front"),
         requested_by_user_id: asTrimmedText(actor?.id, "anonymous"),
         requested_by_org_code: asTrimmedText(actor?.orgUnit?.code, "unassigned"),
@@ -573,6 +634,7 @@ async function prepareTaskSources(prepared) {
                 view_name: asTrimmedText(item.view.name, asTrimmedText(item.view.id, "正面")),
                 product_surface: item.productSurface,
                 ppe_category: item.ppeCategory,
+                ...item.printRule,
                 print_text: asTrimmedText(item.view.printText),
                 logo_name: asTrimmedText(item.logo.name, asTrimmedText(item.logo.company_name)),
                 ppe_reference: itemProduct.imageSource,

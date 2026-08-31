@@ -113,8 +113,9 @@ def _wearing_instructions(product_name: str, product_category: str) -> str:
         )
     if any(keyword in source for keyword in ("安全帽", "头盔", "helmet", "hard hat")):
         instructions.append(
-            "Place exactly one reference helmet on the crown of the head with the brim resting above the eyebrows. "
-            "Preserve the face and identity; only hair and the helmet contact edge may be refined."
+            "Place exactly one supplied reference helmet on the crown of the head with the brim resting above the eyebrows. "
+            "Keep the supplied shell, brim, color and printed artwork unchanged: only the narrow hairline/brim contact edge may be refined. "
+            "Never create a second helmet or alter the eyes, face, shirt, shoulders, or background."
         )
     if any(keyword in source for keyword in ("护目镜", "眼镜", "goggle", "eyewear")):
         instructions.append(

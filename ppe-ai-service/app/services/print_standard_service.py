@@ -7,6 +7,20 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from app.services.official_print_rules import OfficialPrintRule, rule_context_from_parameters
+
+
+def resolve_official_print_standard(
+    parameters: Mapping[str, Any],
+) -> tuple[OfficialPrintRule | None, float | None]:
+    """Resolve a physical-mm rule only when a caller explicitly opts in.
+
+    The legacy standard resolver below remains the fallback for existing task
+    payloads.  The official catalog intentionally rejects unknown or
+    incomplete selections instead of inventing millimetre dimensions.
+    """
+    return rule_context_from_parameters(parameters)
+
 
 def resolve_print_standard(parameters: Mapping[str, Any]) -> dict[str, Any]:
     name = str(parameters.get("product_name", ""))

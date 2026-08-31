@@ -51,6 +51,23 @@ def _face_guard(size: tuple[int, int], anchors: dict[str, Any]) -> Image.Image:
     return guard.filter(ImageFilter.GaussianBlur(max(1, round(face_width * 0.035))))
 
 
+def _helmet_eye_guard(size: tuple[int, int], anchors: dict[str, Any]) -> Image.Image:
+    """Protect the eyes and lower face while leaving a narrow hairline band."""
+    face = anchors["face_box"]
+    face_width = float(anchors["face_width"])
+    center_x = (face["x0"] + face["x1"]) / 2.0
+    eye_line_y = float(anchors.get("eye_line_y", face["y0"] + face_width * 0.57))
+    guard = Image.new("L", size, 0)
+    left = round(center_x - face_width * 0.72)
+    right = round(center_x + face_width * 0.72)
+    top = round(eye_line_y - face_width * 0.10)
+    bottom = round(face["y1"] + face_width * 0.20)
+    from PIL import ImageDraw
+
+    ImageDraw.Draw(guard).ellipse((left, top, right, bottom), fill=255)
+    return guard.filter(ImageFilter.GaussianBlur(max(1, round(face_width * 0.025))))
+
+
 def build_contact_mask(
     product_alpha: Image.Image,
     ppe_category: str,
@@ -79,11 +96,23 @@ def build_contact_mask(
         right = left + width
         bottom = top + height
         if category == "helmet":
-            band = ImageChops.lighter(
-                band,
-                _rect(size, (left - width * 0.08, bottom - height * 0.23, right + width * 0.08, bottom + height * 0.11)),
+            # Only the brim/hairline contact is refinable.  A full shell ring
+            # lets img2img reinterpret the P10 dome and printed artwork.
+            brim_band = _rect(
+                size,
+                (
+                    left - width * 0.025,
+                    bottom - height * 0.16,
+                    right + width * 0.025,
+                    bottom + height * 0.04,
+                ),
             )
-            band = ImageChops.subtract(band, _blur_erode(visible, scale * 0.07))
+            visible_brim = ImageChops.multiply(visible, brim_band)
+            brim_edge = ImageChops.subtract(
+                _blur_dilate(visible_brim, scale * 0.026),
+                _blur_erode(visible_brim, scale * 0.018),
+            )
+            band = ImageChops.lighter(brim_band, brim_edge)
         elif category == "vest":
             band = ImageChops.lighter(
                 band,
@@ -113,20 +142,25 @@ def build_contact_mask(
             )
             band = ImageChops.subtract(band, _blur_erode(visible, scale * 0.10))
 
-    if category != "goggles":
+    if category == "helmet":
+        band = ImageChops.subtract(band, _helmet_eye_guard(size, anchors))
+    elif category != "goggles":
         band = ImageChops.subtract(band, _face_guard(size, anchors))
     feather = max(1.0, scale * 0.022)
     mask = band.filter(ImageFilter.GaussianBlur(feather))
     coverage = sum(mask.histogram()[128:]) / float(size[0] * size[1])
+    mask_bbox = mask.getbbox()
     return mask, {
         "ppe_category": category,
         "strategy": "category_contact_band_mask",
         "mask_coverage_ratio": round(coverage, 4),
+        "mask_bbox": list(mask_bbox) if mask_bbox is not None else None,
         "ring_outer_px": round(scale * 0.055, 2),
         "ring_inner_px": round(scale * 0.035, 2),
         "feather_px": round(feather, 2),
         "face_protected": True,
         "product_core_protected": category != "gloves",
+        "helmet_mask_mode": "brim_hairline_contact_band" if category == "helmet" else None,
     }
 
 

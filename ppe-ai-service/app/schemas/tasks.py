@@ -61,6 +61,11 @@ class LogoPlaceRequest(BaseModel):
     position_y_ratio: float | None = Field(default=None, ge=0, le=1, description="可选手动纵向位置比例；缺失时自动定位。")
     logo_width_ratio: float | None = Field(default=None, gt=0, le=1, description="Logo 宽度占底图宽度的比例。")
     opacity: float | None = Field(default=None, ge=0, le=1, description="Logo 不透明度；缺失时使用模板或默认 1。")
+    product_type: str | None = Field(default=None, description="本地官方印刷规则产品类型，例如 helmet 或 vest。")
+    product_model: str | None = Field(default=None, description="本地官方印刷规则中的产品型号。")
+    product_view: str | None = Field(default=None, description="本地官方印刷规则产品视图，例如 front/back/left/right。")
+    print_zone: str | None = Field(default=None, description="本地官方印刷规则中的印刷区域。")
+    print_scale_px_per_mm: float | None = Field(default=None, gt=0, description="产品图像像素/毫米校准值；使用官方规则时必填。")
     output_format: str = Field(default="png", description="输出图片格式，当前默认 png。")
     sync: bool = Field(default=False, description="是否同步执行。联调时可设为 true，正式环境建议异步。")
 

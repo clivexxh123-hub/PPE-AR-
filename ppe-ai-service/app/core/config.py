@@ -57,6 +57,12 @@ class Settings(BaseModel):
     comfyui_human_wearing_blend_denoise: float = float(
         os.getenv("COMFYUI_HUMAN_WEARING_BLEND_DENOISE", "0.38")
     )
+    # A helmet refines only its brim/hairline contact band, so it needs less
+    # latent noise than fabric PPE.  Keep this category-specific to avoid
+    # changing vest/glove/boot behavior in the current release.
+    comfyui_human_wearing_helmet_denoise: float = float(
+        os.getenv("COMFYUI_HUMAN_WEARING_HELMET_DENOISE", "0.24")
+    )
     comfyui_positive_node_id: str | None = os.getenv("COMFYUI_POSITIVE_NODE_ID")
     comfyui_negative_node_id: str | None = os.getenv("COMFYUI_NEGATIVE_NODE_ID")
     comfyui_latent_node_id: str | None = os.getenv("COMFYUI_LATENT_NODE_ID")
@@ -64,6 +70,12 @@ class Settings(BaseModel):
     comfyui_timeout_seconds: int = int(os.getenv("COMFYUI_TIMEOUT_SECONDS", "300"))
     comfyui_poll_interval_seconds: float = float(os.getenv("COMFYUI_POLL_INTERVAL_SECONDS", "1.5"))
     comfyui_poll_attempts: int = int(os.getenv("COMFYUI_POLL_ATTEMPTS", "200"))
+    logo_collision_similarity_threshold: float = float(
+        os.getenv("LOGO_COLLISION_SIMILARITY_THRESHOLD", "0.90")
+    )
+    logo_collision_dark_luminance_threshold: float = float(
+        os.getenv("LOGO_COLLISION_DARK_LUMINANCE_THRESHOLD", "0.50")
+    )
     task_center_base_url: str | None = os.getenv("TASK_CENTER_BASE_URL")
     callback_hmac_secret: str | None = os.getenv("PPE_CALLBACK_HMAC_SECRET") or None
     ai_task_require_formal_contract: bool = _env_flag("AI_TASK_REQUIRE_FORMAL_CONTRACT")

@@ -90,6 +90,29 @@ def _run(output_root: Path) -> None:
             assert print_metadata["business_protocol"]["operation"] == "print_render"
             assert client.get(print_render.json()["result_url"]).status_code == 200
 
+            official_print = client.post(
+                "/ai/tasks",
+                json=_task_payload(
+                    "smoke-official-helmet-print",
+                    "print_render",
+                    {
+                        "base_image": {"local_path": str(base_path)},
+                        "logo_image": {"local_path": str(logo_path)},
+                        "product_type": "helmet",
+                        "product_model": "P6",
+                        "product_view": "front",
+                        "print_zone": "logo_vertical",
+                        "print_scale_px_per_mm": 1.0,
+                        "helmet_brim_direction": "front",
+                    },
+                ),
+            )
+            assert official_print.status_code == 200, official_print.text
+            assert official_print.json()["status"] == "succeeded", official_print.text
+            official_metadata = client.get(official_print.json()["metadata_url"]).json()
+            assert official_metadata["official_print_rule"]["product_model"] == "P6"
+            assert official_metadata["helmet_view_validation"] == "declared_view_and_brim_direction_matched"
+
             missing_logo = client.post(
                 "/ai/tasks",
                 json=_task_payload("smoke-logo-missing", "logo_remove_bg", {}),

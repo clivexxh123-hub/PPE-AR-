@@ -84,6 +84,11 @@ test("human wearing tasks use real model and PPE image sources", () => {
     assert.equal(prepared.task.parameters.view, "front");
     assert.equal(prepared.task.parameters.framing, "half_body");
     assert.equal(prepared.task.parameters.product_view, "front");
+    assert.equal(prepared.task.parameters.product_type, "helmet");
+    assert.equal(prepared.task.parameters.product_model, null);
+    assert.equal(prepared.task.parameters.print_zone, null);
+    assert.equal(prepared.task.parameters.print_rule_status, "WAIT_CALIBRATION");
+    assert.equal("print_scale_px_per_mm" in prepared.task.parameters, false);
     assert.equal(prepared.task.parameters.prompt_overrides.gaze_direction, "looking directly at the camera; face and torso straight-on");
     assert.equal(prepared.task.parameters.requested_by_user_id, "employee-7");
     assert.equal(
@@ -108,6 +113,59 @@ test("gender-specific full-body tasks carry the target gender into the managed p
     assert.equal(prepared.task.parameters.prompt_overrides.target_gender, "female");
     assert.equal(prepared.task.parameters.prompt_overrides.model_shot_type, "full_body");
     assert.match(prepared.task.parameters.prompt_overrides.gaze_direction, /directly at the camera/);
+});
+
+test("catalog calibration metadata is preserved per outfit without inventing a scale", () => {
+    const prepared = buildBusinessTask(businessPayload({
+        product: {
+            id: "helmet-p6",
+            product_name: "P6 安全帽",
+            category_level_2: "头部防护",
+            product_model: "P6",
+            print_scale_px_per_mm: 2,
+            calibration_id: "catalog/helmet-p6/front/v1",
+            helmet_brim_direction: "front"
+        },
+        view: {
+            id: "front",
+            name: "正面",
+            image: "/uploads/products/p6.png",
+            print_zone: "logo_vertical"
+        }
+    }));
+
+    assert.deepEqual(
+        {
+            product_type: prepared.task.parameters.product_type,
+            product_model: prepared.task.parameters.product_model,
+            product_view: prepared.task.parameters.product_view,
+            print_zone: prepared.task.parameters.print_zone,
+            print_scale_px_per_mm: prepared.task.parameters.print_scale_px_per_mm,
+            print_rule_status: prepared.task.parameters.print_rule_status
+        },
+        {
+            product_type: "helmet",
+            product_model: "P6",
+            product_view: "front",
+            print_zone: "logo_vertical",
+            print_scale_px_per_mm: 2,
+            print_rule_status: "READY"
+        }
+    );
+    assert.equal(prepared.task.parameters.outfit_items[0].print_scale_px_per_mm, 2);
+
+    const uncalibrated = buildBusinessTask(businessPayload({
+        product: {
+            id: "helmet-p6-without-source",
+            product_name: "P6 安全帽",
+            category_level_2: "头部防护",
+            product_model: "P6",
+            print_scale_px_per_mm: 2
+        },
+        view: { id: "front", image: "/uploads/products/p6.png", print_zone: "logo_vertical" }
+    }));
+    assert.equal("print_scale_px_per_mm" in uncalibrated.task.parameters, false);
+    assert.equal(uncalibrated.task.parameters.print_rule_status, "WAIT_CALIBRATION");
 });
 
 test("reflective vest products override a stale helmet surface from older clients", () => {
@@ -167,6 +225,21 @@ test("a multi-product task keeps every selected PPE item and the scene reference
     assert.deepEqual(
         prepared.task.parameters.outfit_items.map(item => item.ppe_category),
         ["helmet", "vest", "gloves"]
+    );
+    assert.deepEqual(
+        prepared.task.parameters.outfit_items.map(item => ({
+            product_type: item.product_type,
+            product_model: item.product_model,
+            product_view: item.product_view,
+            print_zone: item.print_zone,
+            print_rule_status: item.print_rule_status,
+            has_scale: "print_scale_px_per_mm" in item
+        })),
+        [
+            { product_type: "helmet", product_model: null, product_view: "front", print_zone: null, print_rule_status: "WAIT_CALIBRATION", has_scale: false },
+            { product_type: "vest", product_model: null, product_view: "front", print_zone: null, print_rule_status: "WAIT_CALIBRATION", has_scale: false },
+            { product_type: "gloves", product_model: null, product_view: "front", print_zone: null, print_rule_status: "WAIT_CALIBRATION", has_scale: false }
+        ]
     );
     assert.equal(prepared.sceneImage, "/uploads/scenes/construction.png");
 });
