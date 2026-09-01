@@ -9,6 +9,7 @@ import httpx
 from PIL import Image, ImageChops, UnidentifiedImageError
 
 from app.core.config import ensure_storage_dirs, settings
+from app.services.human_wearing_preservation import lock_unmasked_regions
 
 
 class ComfyUIError(RuntimeError):
@@ -247,37 +248,11 @@ def _lock_human_wearing_unmasked_regions(
     input_path: Path,
     mask_path: Path,
 ) -> dict[str, Any]:
-    """Make the contact-only mask a real output invariant, not just metadata."""
-    with Image.open(generated_path) as source:
-        generated = source.convert("RGB")
-    with Image.open(input_path) as source:
-        original = source.convert("RGB")
-    with Image.open(mask_path) as source:
-        mask = source.convert("L")
-    if original.size != generated.size or mask.size != generated.size:
-        raise ComfyUIError("human_wearing input, mask, and output dimensions must match for core lock.")
-    # White mask pixels are the only pixels ComfyUI is permitted to alter.
-    # This preserves the P10 shell, printed design, face, shirt and background
-    # outside the explicit contact band even if a workflow node is miswired.
-    locked = Image.composite(generated, original, mask)
-    locked.save(generated_path, format="PNG")
-    # A hard-zero mask pixel is contractually immutable after the post-composite.
-    # Record the measured result so downstream metadata cannot claim protection
-    # without evidence from the actual final output.
-    unchanged_mask = mask.point(lambda value: 255 if value == 0 else 0)
-    unmasked_delta = ImageChops.multiply(
-        ImageChops.difference(locked, original).convert("L"),
-        unchanged_mask,
-    )
-    unmasked_mismatch_pixels = sum(unmasked_delta.histogram()[1:])
-    coverage = sum(mask.histogram()[128:]) / float(mask.width * mask.height)
-    return {
-        "applied": True,
-        "method": "post_composite_unmasked_input_lock",
-        "mask_coverage_ratio": round(coverage, 4),
-        "unmasked_mismatch_pixels": unmasked_mismatch_pixels,
-        "protected_regions": ["helmet_core", "eyes_face", "shirt", "body_outline", "background"],
-    }
+    """Backward-compatible facade for the isolated preservation policy."""
+    try:
+        return lock_unmasked_regions(generated_path, input_path, mask_path)
+    except ValueError as exc:
+        raise ComfyUIError(str(exc)) from exc
 
 
 def _extract_first_image(history_item: dict[str, Any]) -> dict[str, str] | None:

@@ -10,6 +10,10 @@ from app.services.human_anchor_service import (
     public_anchor_metadata,
     resolve_ppe_placements,
 )
+from app.services.human_wearing_categories import (
+    render_category_layer,
+    split_paired_product,
+)
 from app.services.ppe_blend_service import prepare_blend_inputs
 
 
@@ -153,35 +157,6 @@ def _trim_transparent_product(image: Image.Image) -> Image.Image:
     )
 
 
-def _split_paired_product(image: Image.Image) -> list[Image.Image]:
-    """Split a side-by-side glove/shoe pair into one source per body side."""
-    rgba = image.convert("RGBA")
-    alpha = rgba.getchannel("A").point(lambda value: 255 if value >= 24 else 0)
-    width, height = rgba.size
-    if width < 24 or height < 24:
-        return [rgba]
-    column_profile = alpha.resize((width, 1), Image.Resampling.BOX)
-    search_left = max(1, round(width * 0.28))
-    search_right = min(width - 1, round(width * 0.72))
-    split_x = min(
-        range(search_left, search_right),
-        key=lambda x: column_profile.getpixel((x, 0)),
-    )
-    if column_profile.getpixel((split_x, 0)) > 40:
-        return [rgba]
-
-    parts: list[Image.Image] = []
-    total_visible = max(1, sum(alpha.histogram()[128:]))
-    for left, right in ((0, split_x), (split_x, width)):
-        part_alpha = alpha.crop((left, 0, right, height))
-        bounds = part_alpha.getbbox()
-        visible = sum(part_alpha.histogram()[128:])
-        if bounds is None or visible < total_visible * 0.18:
-            return [rgba]
-        parts.append(rgba.crop((left + bounds[0], bounds[1], left + bounds[2], bounds[3])))
-    return parts
-
-
 def _visible_average_color(image: Image.Image) -> tuple[int, int, int]:
     rgba = image.convert("RGBA")
     totals = [0, 0, 0]
@@ -196,28 +171,6 @@ def _visible_average_color(image: Image.Image) -> tuple[int, int, int]:
     if not total_weight:
         return 160, 120, 32
     return tuple(round(value / total_weight) for value in totals)
-
-
-def _warp_vest_rows(image: Image.Image, width: int, height: int, view: str) -> Image.Image:
-    """Create a torso-like trapezoid without adding heavyweight CV dependencies."""
-    base = image.resize((width, height), Image.Resampling.LANCZOS)
-    warped = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    side_view = view == "slight_side"
-    for row_index in range(height):
-        progress = row_index / max(1, height - 1)
-        if side_view:
-            left_inset = round(width * (0.15 * (1 - progress)))
-            right_inset = round(width * (0.04 * (1 - progress)))
-        else:
-            inset = round(width * (0.09 * (1 - progress)))
-            left_inset = inset
-            right_inset = inset
-        row_width = max(1, width - left_inset - right_inset)
-        row = base.crop((0, row_index, width, row_index + 1)).resize(
-            (row_width, 1), Image.Resampling.BILINEAR
-        )
-        warped.alpha_composite(row, (left_inset, row_index))
-    return warped
 
 
 def _high_visibility_torso_mask(human: Image.Image, y_start: int, y_end: int) -> tuple[Image.Image, int]:
@@ -377,7 +330,7 @@ def render_human_wearing_design(
     product_canvas = Image.new("RGBA", human.size, (0, 0, 0, 0))
     rendered_placements: list[dict[str, Any]] = []
     paired_sources = (
-        _split_paired_product(ppe)
+        split_paired_product(ppe)
         if normalized_category in {"gloves", "boots"} and len(requested_placements) == 2
         else [ppe]
     )
@@ -385,10 +338,9 @@ def render_human_wearing_design(
         source_component = paired_sources[min(placement_index, len(paired_sources) - 1)]
         target_width = max(1, round(float(requested["width"])))
         target_height = max(1, round(float(requested["height"])))
-        if normalized_category == "vest":
-            layer = _warp_vest_rows(source_component, target_width, target_height, view)
-        else:
-            layer = source_component.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        layer = render_category_layer(
+            normalized_category, source_component, target_width, target_height, view
+        )
         if requested.get("mirror") and len(paired_sources) == 1:
             layer = ImageOps.mirror(layer)
         if opacity < 1:
