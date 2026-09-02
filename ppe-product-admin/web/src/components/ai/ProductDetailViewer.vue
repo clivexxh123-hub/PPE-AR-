@@ -82,11 +82,17 @@ function overlay(view) {
   return {
     logoImage,
     logoName,
+    logoScale: Number(view?.logoScale) || 100,
     text: view?.printText || "",
     zones: Array.isArray(view?.printZones)
       ? view.printZones.filter(zone => zone.face === view.id)
       : []
   };
+}
+
+function logoScaleStyle(target) {
+  const scale = Math.min(1.2, Math.max(.6, (Number(target?.logoScale) || 100) / 100));
+  return { "--logo-scale": String(scale) };
 }
 
 function zoneLogo(zone) {
@@ -131,6 +137,7 @@ function zoneLogo(zone) {
                 v-if="zone.type === 'logo' && zoneLogo(zone)"
                 class="face-print-zone"
                 :class="`zone-${zone.id}`"
+                :style="logoScaleStyle(zone)"
                 :src="zoneLogo(zone)"
                 :alt="zone.logo?.name || '印刷 Logo'"
               />
@@ -147,6 +154,7 @@ function zoneLogo(zone) {
             v-else-if="overlay(activeView).logoImage"
             class="face-logo-overlay"
             :class="{ 'helmet-logo-mark': activeSurface === 'helmet' }"
+            :style="logoScaleStyle(overlay(activeView))"
           >
             <img
               :src="overlay(activeView).logoImage"
@@ -184,6 +192,7 @@ function zoneLogo(zone) {
                   v-if="zone.type === 'logo' && zoneLogo(zone)"
                   class="face-print-zone"
                   :class="`zone-${zone.id}`"
+                  :style="logoScaleStyle(zone)"
                   :src="zoneLogo(zone)"
                   alt=""
                 />
@@ -200,6 +209,7 @@ function zoneLogo(zone) {
               v-else-if="view.image && overlay(view).logoImage"
               class="face-logo-overlay"
               :class="{ 'helmet-logo-mark': activeSurface === 'helmet' }"
+              :style="logoScaleStyle(overlay(view))"
             >
               <img :src="overlay(view).logoImage" alt="" />
             </span>
@@ -388,7 +398,7 @@ function zoneLogo(zone) {
   z-index: 2;
   max-width: 24%;
   max-height: 16%;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(var(--logo-scale, 1));
 }
 
 .face-logo-overlay {
@@ -446,7 +456,7 @@ function zoneLogo(zone) {
   position: absolute;
   z-index: 3;
   object-fit: contain;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(var(--logo-scale, 1));
 }
 
 .face-zone-text {

@@ -41,6 +41,38 @@
   align-items: center;
 }
 
+.business-records-actions .el-input {
+  width: 220px;
+}
+
+.business-records-actions .el-select {
+  width: 190px;
+}
+
+.record-name-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.record-name-cell > span {
+  color: #315efb;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.record-name-cell strong {
+  overflow-wrap: anywhere;
+  color: #25324a;
+  font-size: 12px;
+}
+
+.record-name-cell small {
+  color: #7b879d;
+  font-size: 10px;
+}
+
 .business-records-table-card {
   overflow: hidden;
   padding: 10px 20px 18px;
@@ -74,6 +106,15 @@
   font-weight: 700;
 }
 
+.record-owner-cell .record-preflight-warning {
+  align-self: flex-start;
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: #8a5800;
+  background: #fff3d3;
+  font-weight: 700;
+}
+
 .record-operation-cell {
   display: flex;
   align-items: center;
@@ -85,6 +126,16 @@
   .business-records-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .business-records-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .business-records-actions .el-input,
+  .business-records-actions .el-select {
+    width: 100%;
   }
 
   .business-records-table-card {

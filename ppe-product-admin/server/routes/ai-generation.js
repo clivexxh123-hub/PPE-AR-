@@ -7,10 +7,16 @@ const { httpError } = require("../services/iam/security");
 const pool = require("../db");
 const { GenerationRecordRepository } = require("../services/generation-records");
 const { IamRepository } = require("../services/iam/repository");
+const { CustomerRepository } = require("../services/customer-repository");
+const { canManageCustomer, normalizeCustomerId } = require("../services/customer-service");
+const { CaseTemplateRepository } = require("../services/case-template-repository");
 
 const router = express.Router();
 const generationRecords = new GenerationRecordRepository(pool);
 const iamRepository = new IamRepository(pool);
+const customers = new CustomerRepository(pool);
+const caseTemplates = new CaseTemplateRepository(pool);
+const tenantId = String(process.env.IAM_TENANT_ID || "shoudun-ppe");
 
 const DEFAULT_AI_SERVICE_BASE_URL = "http://127.0.0.1:8000";
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -125,6 +131,34 @@ function safeJobId(value) {
 function canReviseRecord(user, record) {
     if (!record || !hasPermission(user, "records.write_own")) return false;
     return isSuperAdministrator(user) || String(record.user?.id || "") === String(user?.id || "");
+}
+
+async function resolveGenerationCustomer(value, actor) {
+    if (!value) return null;
+    const customer = await customers.findById(normalizeCustomerId(value), tenantId);
+    if (!customer) {
+        throw httpError(404, "所选客户不存在或已删除", "GENERATION_404_CUSTOMER_NOT_FOUND");
+    }
+    if (!canManageCustomer(actor, customer)) {
+        throw httpError(403, "只能为本人客户创建作图记录", "GENERATION_403_CUSTOMER_OWNERSHIP_REQUIRED");
+    }
+    return customer;
+}
+
+async function resolveCaseTemplate(value, actor) {
+    const id = asTrimmedText(value);
+    if (!id) return null;
+    if (!/^[a-z0-9][a-z0-9_-]{2,63}$/i.test(id)) {
+        throw httpError(400, "案例模板 ID 格式无效", "GENERATION_400_CASE_TEMPLATE_ID_INVALID");
+    }
+    const template = await caseTemplates.findPublishedById(id, tenantId, {
+        actorUserId: actor?.id || null,
+        includeAllCustomerCases: isSuperAdministrator(actor)
+    });
+    if (!template) {
+        throw httpError(404, "案例模板不存在或已停用", "GENERATION_404_CASE_TEMPLATE_NOT_FOUND");
+    }
+    return template;
 }
 
 function normalizeAssetUrl(value) {
@@ -360,9 +394,8 @@ function metadataPositiveNumber(record, names) {
 }
 
 function printRuleFields(ppeCategory, product, view) {
-    // Product details come from the catalog API.  A physical scale is only
-    // accepted with an explicit catalog calibration source; never infer it
-    // from image pixels, a filename, SKU, or static UI zone.
+    // Physical scale is trusted only when the catalog explicitly identifies
+    // its calibration source. Never infer it from pixels, filenames or SKUs.
     const productModel = metadataText(product, ["product_model", "model", "model_no", "model_number"]);
     const printZone = metadataText(view, ["print_zone", "printZone"])
         || metadataText(product, ["print_zone", "default_print_zone"]);
@@ -395,8 +428,8 @@ function printRuleFields(ppeCategory, product, view) {
             product_model: productModel ? "product_catalog" : null,
             product_view: "product_files.face",
             print_zone: printZone ? "catalog_view_or_product_metadata" : null,
-            print_scale_px_per_mm: pixelsPerMm ? calibrationSource : null,
-        },
+            print_scale_px_per_mm: pixelsPerMm ? calibrationSource : null
+        }
     };
 }
 
@@ -461,7 +494,7 @@ function normalizeOutfitItems(body, composition) {
             ppeCategory,
             productCategory: categoryOf(product),
             productSurface: productSurfaceOf(product, view),
-            printRule,
+            printRule
         };
     });
 }
@@ -685,6 +718,10 @@ router.post("/generations", requirePermission("generation.use"), async (req, res
     let recordCreated = false;
     try {
         prepared = buildBusinessTask(req.body, req.auth?.user);
+        prepared.printPreflight = req.body?.printPreflight || null;
+        let selectedCustomer = await resolveGenerationCustomer(req.body?.customerId, req.auth.user);
+        let selectedCaseTemplate = await resolveCaseTemplate(req.body?.caseTemplateId, req.auth.user);
+        let versionNo = 1;
         if (req.body?.sourceJobId) {
             const sourceJobId = safeJobId(req.body.sourceJobId);
             const sourceRecord = await generationRecords.findByJobId(sourceJobId);
@@ -698,12 +735,22 @@ router.post("/generations", requirePermission("generation.use"), async (req, res
                 throw httpError(409, "只有已完成的记录可以用于重新作图", "GENERATION_409_REVISION_STATUS_INVALID");
             }
             attachSourceRecord(prepared, sourceRecord);
+            versionNo = Math.max(1, Number(sourceRecord.versionNo || 1)) + 1;
+            if (!selectedCustomer && sourceRecord.customer?.id) {
+                selectedCustomer = await resolveGenerationCustomer(sourceRecord.customer.id, req.auth.user);
+            }
+            if (!selectedCaseTemplate && sourceRecord.caseTemplate?.id) {
+                selectedCaseTemplate = await resolveCaseTemplate(sourceRecord.caseTemplate.id, req.auth.user);
+            }
         }
         const aiRuntime = await loadAiHealth();
-        await generationRecords.create({
+        const recordIdentity = await generationRecords.create({
             prepared,
             actor: req.auth.user,
             batchId: normalizeBatchId(req.body?.batchId),
+            customer: selectedCustomer,
+            caseTemplate: selectedCaseTemplate,
+            versionNo,
             product: req.body?.product,
             model: req.body?.model,
             scene: req.body?.scene,
@@ -720,7 +767,21 @@ router.post("/generations", requirePermission("generation.use"), async (req, res
         const payload = await readAiJson(response);
         const publicPayload = publicTaskPayload(payload, aiRuntime.engine);
         await generationRecords.updateFromTask(task.jobId, publicPayload);
-        res.status(202).json({ success: true, data: publicPayload });
+        res.status(202).json({
+            success: true,
+            data: {
+                ...publicPayload,
+                ...recordIdentity,
+                customer: selectedCustomer ? {
+                    id: selectedCustomer.id,
+                    name: selectedCustomer.customerName
+                } : null,
+                caseTemplate: selectedCaseTemplate ? {
+                    id: selectedCaseTemplate.id,
+                    name: selectedCaseTemplate.name
+                } : null
+            }
+        });
     } catch (error) {
         if (recordCreated && prepared?.task?.jobId) {
             try {
@@ -741,7 +802,9 @@ router.get(
             const records = await generationRecords.list({
                 limit: req.query.limit,
                 userId: req.query.userId,
-                status: req.query.status
+                status: req.query.status,
+                customerId: req.query.customerId,
+                search: req.query.search
             });
             const visibleRecords = records.map((record) => ({
                 ...record,
@@ -756,7 +819,9 @@ router.get(
                     count: visibleRecords.length,
                     filters: {
                         userId: req.query.userId || null,
-                        status: req.query.status || null
+                        status: req.query.status || null,
+                        customerId: req.query.customerId || null,
+                        search: req.query.search || null
                     }
                 }
             });

@@ -53,7 +53,7 @@ const menuItems = [
 
   {
     path:"/product-library",
-    title:"产品库",
+    title:"产品与案例库",
     icon:"Box"
   },
 

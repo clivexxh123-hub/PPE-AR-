@@ -88,9 +88,21 @@ export function mapProductFilesToFaces(
       surface,
       printType: definition.printType,
       logo: null,
+      logoScale: 100,
+      printStandard: resolvePrintStandardForFace(surface, definition.id),
       printText: defaultPrintTexts[definition.id] || ""
     };
   });
+}
+
+function resolvePrintStandardForFace(surface, face) {
+  const standards = {
+    "helmet:front": { id: "helmet-front", regularMm: { width: 70, height: 50 }, maximumMm: { width: 90, height: 58 } },
+    "helmet:back": { id: "helmet-back", regularMm: { width: 70, height: 50 }, maximumMm: { width: 90, height: 58 } },
+    "helmet:left": { id: "helmet-side", regularMm: { width: 90, height: 40 }, maximumMm: { width: 100, height: 45 } },
+    "helmet:right": { id: "helmet-side", regularMm: { width: 90, height: 40 }, maximumMm: { width: 100, height: 45 } }
+  };
+  return standards[`${surface}:${face}`] || null;
 }
 
 export function facePrintInstruction(view) {
@@ -121,6 +133,8 @@ export function normalizeShowcaseProduct(product = {}, views = []) {
       surface,
       image: String(source.image || "").trim(),
       printText: String(source.printText || "").trim(),
+      logoScale: Math.min(120, Math.max(60, Number(source.logoScale) || 100)),
+      printStandard: source.printStandard || null,
       logo: source.logo ? {
         name: String(source.logo.name || source.logo.logo_name || "").trim(),
         image: String(source.logo.image || source.logo.logo_url || "").trim()
@@ -130,6 +144,8 @@ export function normalizeShowcaseProduct(product = {}, views = []) {
           id: String(zone.id || ""),
           face: String(zone.face || id),
           type: zone.type === "logo" ? "logo" : "text",
+          logoScale: Math.min(120, Math.max(60, Number(zone.logoScale) || 100)),
+          printStandard: zone.printStandard || null,
           text: String(zone.text || zone.printText || "").trim(),
           logo: zone.logo ? {
             name: String(zone.logo.name || zone.logo.logo_name || "").trim(),

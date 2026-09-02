@@ -1,6 +1,4 @@
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
@@ -36,18 +34,8 @@ test("maps a legacy logo filename to the new ai_logo_assets fields", () => {
     );
 });
 
-test("discovers the four unique legacy logo materials", (context) => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ppe-legacy-logos-"));
-    context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-    const fixtures = [
-        "1786440518049-国家电网-北京.png",
-        "1786440518050-东方电气集团-四川.png",
-        "1786440518051-国家电投-上海.png",
-        "1786440518052-保利集团-广东.png"
-    ];
-    for (const fileName of fixtures) {
-        fs.writeFileSync(path.join(directory, fileName), `fixture:${fileName}`, "utf8");
-    }
+test("discovers the four unique legacy logo materials", () => {
+    const directory = path.resolve(__dirname, "..", "uploads", "logos");
     const logos = collectLegacyLogos(directory);
     assert.equal(logos.length, 4);
     assert.deepEqual(

@@ -11,6 +11,9 @@ const router = useRouter();
 const authStore = useAuthStore();
 const loading = ref(false);
 const records = ref([]);
+const customers = ref([]);
+const search = ref("");
+const customerId = ref("");
 const status = ref("");
 const deletingJobId = ref("");
 
@@ -48,7 +51,12 @@ async function loadRecords() {
   loading.value = true;
   try {
     const response = await request.get("/ai/generation-records", {
-      params: { limit: 200, status: status.value || undefined }
+      params: {
+        limit: 200,
+        status: status.value || undefined,
+        customerId: customerId.value || undefined,
+        search: search.value.trim() || undefined
+      }
     });
     records.value = response.data || [];
   } catch (error) {
@@ -56,6 +64,25 @@ async function loadRecords() {
   } finally {
     loading.value = false;
   }
+}
+
+async function loadCustomers() {
+  try {
+    const response = await request.get("/customers", {
+      params: { limit: 500 },
+      silentError: true
+    });
+    customers.value = response.data?.items || [];
+  } catch {
+    customers.value = [];
+  }
+}
+
+function clearFilters() {
+  search.value = "";
+  customerId.value = "";
+  status.value = "";
+  loadRecords();
 }
 
 async function openResult(record) {
@@ -106,7 +133,7 @@ async function deleteRecord(record) {
   }
 }
 
-onMounted(loadRecords);
+onMounted(() => Promise.all([loadCustomers(), loadRecords()]));
 </script>
 
 <template>
@@ -118,6 +145,21 @@ onMounted(loadRecords);
         <p>普通员工可查看全员记录；员工调组不会改变历史部门和小组归属。</p>
       </div>
       <div class="business-records-actions">
+        <el-input
+          v-model="search"
+          clearable
+          placeholder="搜索客户、记录名、产品"
+          @keyup.enter="loadRecords"
+          @clear="loadRecords"
+        />
+        <el-select v-model="customerId" filterable clearable placeholder="全部客户" @change="loadRecords">
+          <el-option
+            v-for="customer in customers"
+            :key="customer.id"
+            :label="`${customer.customerName} · ${customer.archiveName}`"
+            :value="customer.id"
+          />
+        </el-select>
         <el-select v-model="status" style="width: 130px" @change="loadRecords">
           <el-option
             v-for="option in statusOptions"
@@ -126,12 +168,22 @@ onMounted(loadRecords);
             :value="option.value"
           />
         </el-select>
+        <el-button @click="clearFilters">重置</el-button>
         <el-button :loading="loading" @click="loadRecords">刷新</el-button>
       </div>
     </header>
 
     <div class="business-records-table-card">
       <el-table v-loading="loading" :data="records" row-key="jobId">
+        <el-table-column label="客户 / 记录名称" min-width="270">
+          <template #default="{ row }">
+            <div class="record-name-cell">
+              <span>{{ row.customer?.name || "未绑定客户" }}</span>
+              <strong>{{ row.displayName || row.jobId }}</strong>
+              <small v-if="row.caseTemplate?.name">来自案例：{{ row.caseTemplate.name }}</small>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="生成时间" min-width="165">
           <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
         </el-table-column>
@@ -149,6 +201,12 @@ onMounted(loadRecords);
               <strong>{{ row.product?.name }}</strong>
               <span>{{ row.product?.code || "无产品编号" }}</span>
               <span v-if="row.parameters?.sourceJobId" class="record-revision-mark">修改版本</span>
+              <span
+                v-if="row.printPreflight?.status === 'warning'"
+                class="record-preflight-warning"
+              >
+                印刷需复核
+              </span>
             </div>
           </template>
         </el-table-column>

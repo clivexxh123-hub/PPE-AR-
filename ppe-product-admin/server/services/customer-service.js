@@ -6,12 +6,16 @@ const { organizationSnapshot } = require("./generation-records");
 
 const CUSTOMER_FIELDS = [
     "customerName",
+    "companyShortName",
+    "industry",
     "remarkId",
     "notes"
 ];
 
 const FIELD_RULES = {
     customerName: ["客户ID", 120],
+    companyShortName: ["客户简称", 80],
+    industry: ["所属行业", 100],
     remarkId: ["淘宝ID或订单号", 100],
     notes: ["备注", 4000]
 };

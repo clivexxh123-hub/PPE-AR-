@@ -174,13 +174,14 @@ async function drawFace(context, view, x, y, width, height, cache) {
       const [cx, cy, zoneWidth, zoneHeight] = zonePositions[zone.id] || [.5, .45, .3, .12];
       const logo = await loadImage(zone?.logo?.image, cache);
       if (zone.type === "logo" && logo) {
+        const logoScale = Math.min(1.2, Math.max(.6, (Number(zone.logoScale) || 100) / 100));
         drawContain(
           context,
           logo,
-          x + width * (cx - zoneWidth / 2),
-          y + height * (cy - zoneHeight / 2),
-          width * zoneWidth,
-          height * zoneHeight
+          x + width * (cx - zoneWidth * logoScale / 2),
+          y + height * (cy - zoneHeight * logoScale / 2),
+          width * zoneWidth * logoScale,
+          height * zoneHeight * logoScale
         );
       } else if (zone.type === "text" && zone.text) {
         context.fillStyle = "#172033";
@@ -196,10 +197,25 @@ async function drawFace(context, view, x, y, width, height, cache) {
     }
   } else {
     const logo = await loadImage(view?.logo?.image, cache);
+    const logoScale = Math.min(1.2, Math.max(.6, (Number(view?.logoScale) || 100) / 100));
     if (image && logo && view?.surface === "helmet") {
-      drawHelmetMark(context, logo, x + width * .45, y + height * .565, width * .10, height * .10);
+      drawHelmetMark(
+        context,
+        logo,
+        x + width * (.5 - .05 * logoScale),
+        y + height * (.615 - .05 * logoScale),
+        width * .10 * logoScale,
+        height * .10 * logoScale
+      );
     } else if (image && logo) {
-      drawContain(context, logo, x + width * .38, y + height * .35, width * .24, height * .18);
+      drawContain(
+        context,
+        logo,
+        x + width * (.5 - .12 * logoScale),
+        y + height * (.44 - .09 * logoScale),
+        width * .24 * logoScale,
+        height * .18 * logoScale
+      );
     }
     else if (image && view?.printText) {
       const textPositions = {

@@ -11,6 +11,7 @@ const logoRoutes=require("./routes/logo");
 const aiResourceRoutes = require("./routes/ai-resource");
 const aiGenerationRoutes = require("./routes/ai-generation");
 const customerRoutes = require("./routes/customers");
+const caseTemplateRoutes = require("./routes/case-templates");
 const dashboardRoutes = require("./routes/dashboard");
 const { publicErrorPayload } = require("./services/public-error");
 
@@ -79,6 +80,11 @@ app.use(
 app.use(
     "/api/customers",
     customerRoutes
+);
+
+app.use(
+    "/api/case-templates",
+    caseTemplateRoutes
 );
 
 app.use(

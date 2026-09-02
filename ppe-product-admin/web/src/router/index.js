@@ -9,7 +9,7 @@ import Dashboard from "../views/Dashboard.vue";
 import GenerationRecords from "../views/GenerationRecords.vue";
 import Login from "../views/Login.vue";
 import ProductEdit from "../views/ProductEdit.vue";
-import ProductLibrary from "../views/ProductLibrary.vue";
+import SolutionLibrary from "../views/SolutionLibrary.vue";
 import ProductList from "../views/ProductList.vue";
 import ResourceManage from "../views/ResourceManage.vue";
 
@@ -37,6 +37,13 @@ const routes = [
         name: "AIGenerator",
         component: AIGenerator,
         meta: { title: "AI生成中心", icon: "MagicStick" }
+      },
+      {
+        path: "case-library",
+        redirect: (to) => ({
+          path: "/product-library",
+          query: { ...to.query, tab: "cases" }
+        })
       },
       {
         path: "customers",
@@ -67,8 +74,8 @@ const routes = [
       {
         path: "product-library",
         name: "ProductLibrary",
-        component: ProductLibrary,
-        meta: { title: "产品库", icon: "Box" }
+        component: SolutionLibrary,
+        meta: { title: "产品与案例库", icon: "Box" }
       },
       {
         path: "products",

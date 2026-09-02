@@ -3,6 +3,8 @@ const test = require("node:test");
 
 const {
     GenerationRecordRepository,
+    buildGenerationDisplayName,
+    normalizePrintPreflight,
     organizationSnapshot,
     progressForStatus
 } = require("../services/generation-records");
@@ -80,13 +82,40 @@ test("generation records store user and organization values at event time", asyn
     assert.equal(calls.length, 1);
     const values = calls[0].values;
     assert.equal(values[0], "job-1");
-    assert.equal(values[4], "employee-7");
-    assert.equal(values[5], "销售七");
-    assert.equal(values[7], "presale-2");
-    assert.equal(values[10], "jingshan-public");
-    assert.equal(values[16], "front");
-    assert.equal(values[17], "half_body");
-    assert.equal(values[23], "comfyui");
+    assert.equal(values[10], "employee-7");
+    assert.equal(values[11], "销售七");
+    assert.equal(values[13], "presale-2");
+    assert.equal(values[16], "jingshan-public");
+    assert.equal(values[22], "front");
+    assert.equal(values[23], "half_body");
+    assert.equal(values[29], "comfyui");
+});
+
+test("customer generation names include customer, date, print content and version", () => {
+    const displayName = buildGenerationDisplayName({
+        customer: { customerName: "客户ID023", companyShortName: "广东建工" },
+        product: { product_name: "P10安全帽" },
+        caseTemplate: { workScene: "电工作业" },
+        prepared: {
+            task: {
+                parameters: {
+                    prompt_overrides: { logo_name: "广东三局" }
+                }
+            }
+        },
+        versionNo: 2,
+        now: new Date(2026, 7, 31)
+    });
+    assert.equal(displayName, "客户ID023-20260831-广东建工-电工作业-广东三局Logo-V02");
+});
+
+test("print preflight snapshots are bounded and normalized", () => {
+    const snapshot = normalizePrintPreflight({
+        status: "warning",
+        checks: [{ id: "contrast", label: "撞色", status: "warning", message: "使用白墨底托" }]
+    });
+    assert.equal(snapshot.status, "warning");
+    assert.equal(snapshot.checks[0].message, "使用白墨底托");
 });
 
 test("super administrator deletion creates an auditable tombstone", async () => {

@@ -11,6 +11,109 @@
   box-shadow: 0 8px 24px rgba(49, 87, 255, 0.08);
 }
 
+.generation-case-template-banner {
+  display: grid;
+  align-items: center;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  gap: 14px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid #bdd0ff;
+  border-radius: 14px;
+  color: #24458f;
+  background: linear-gradient(100deg, #edf3ff, #f8faff);
+}
+
+.generation-case-template-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  color: #fff;
+  background: #315efb;
+  font-size: 15px;
+  font-weight: 800;
+  place-items: center;
+}
+
+.generation-case-template-banner > div:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.generation-case-template-banner span,
+.generation-case-template-banner small {
+  color: #61729a;
+  font-size: 10px;
+}
+
+.generation-case-template-banner strong {
+  color: #183b8f;
+  font-size: 13px;
+}
+
+.generation-case-template-banner p {
+  margin: 0;
+  color: #536789;
+  font-size: 11px;
+}
+
+.generation-case-template-banner > button {
+  padding: 7px 11px;
+  border: 1px solid #aec1ed;
+  border-radius: 8px;
+  color: #31539a;
+  background: #fff;
+  cursor: pointer;
+}
+
+.logo-size-control {
+  display: grid;
+  align-items: center;
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.4fr) 46px;
+  gap: 8px 14px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid #d5e0fb;
+  border-radius: 11px;
+  background: #f7f9ff;
+}
+
+.logo-size-control > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.logo-size-control strong {
+  color: #243653;
+  font-size: 12px;
+}
+
+.logo-size-control span,
+.logo-size-control small {
+  color: #687895;
+  font-size: 10px;
+}
+
+.logo-size-control input {
+  width: 100%;
+  accent-color: #315efb;
+}
+
+.logo-size-control b {
+  color: #315efb;
+  font-size: 12px;
+  text-align: right;
+}
+
+.logo-size-control small {
+  grid-column: 1 / -1;
+}
+
 .generation-edit-source-banner > img {
   width: 92px;
   height: 72px;
@@ -60,6 +163,23 @@
 }
 
 @media (max-width: 720px) {
+  .generation-case-template-banner {
+    align-items: flex-start;
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .generation-case-template-banner > button {
+    grid-column: 1 / -1;
+  }
+
+  .logo-size-control {
+    grid-template-columns: 1fr 46px;
+  }
+
+  .logo-size-control > div {
+    grid-column: 1 / -1;
+  }
+
   .generation-edit-source-banner {
     grid-template-columns: 72px minmax(0, 1fr);
   }

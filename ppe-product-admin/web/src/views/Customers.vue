@@ -25,6 +25,8 @@ const generationArchives = ref([]);
 
 const emptyForm = () => ({
   customerName: "",
+  companyShortName: "",
+  industry: "",
   remarkId: "",
   notes: ""
 });
@@ -50,6 +52,8 @@ function formatTime(value) {
 function resetForm(customer = null) {
   Object.assign(form, emptyForm(), customer ? {
     customerName: customer.customerName || "",
+    companyShortName: customer.companyShortName || "",
+    industry: customer.industry || "",
     remarkId: customer.remarkId || "",
     notes: customer.notes || ""
   } : {});
@@ -160,6 +164,16 @@ function compositionLabel(composition) {
   return `${view} · ${framing}`;
 }
 
+function statusLabel(status) {
+  return {
+    preparing: "准备中",
+    queued: "排队中",
+    running: "生成中",
+    succeeded: "已完成",
+    failed: "失败"
+  }[status] || "未知";
+}
+
 async function openHistory(customer) {
   historyCustomer.value = customer;
   historyVisible.value = true;
@@ -167,7 +181,7 @@ async function openHistory(customer) {
   generationArchives.value = [];
   try {
     const response = await request.get(
-      `/customers/${encodeURIComponent(customer.id)}/generation-archives`,
+      `/customers/${encodeURIComponent(customer.id)}/generation-records`,
       { params: { limit: 200 }, silentError: true }
     );
     generationArchives.value = response.data || [];
@@ -214,6 +228,7 @@ onMounted(loadCustomers);
           <template #default="{ row }">
             <div class="customer-primary-cell">
               <strong>{{ row.customerName }}</strong>
+              <span>{{ row.companyShortName || "未填写客户简称" }} · {{ row.industry || "未分类行业" }}</span>
               <small>{{ row.notes || "无备注" }}</small>
             </div>
           </template>
@@ -222,6 +237,14 @@ onMounted(loadCustomers);
           <template #default="{ row }">
             <div class="customer-archive-cell">
               <code>{{ row.archiveName }}</code>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="作图记录" min-width="170">
+          <template #default="{ row }">
+            <div class="customer-record-count">
+              <strong>{{ row.generationRecordCount || 0 }} 条</strong>
+              <span>最近：{{ formatTime(row.latestGenerationAt) }}</span>
             </div>
           </template>
         </el-table-column>
@@ -260,6 +283,12 @@ onMounted(loadCustomers);
           <el-form-item label="淘宝ID或订单号（必填，作为归档名）">
             <el-input v-model="form.remarkId" maxlength="100" show-word-limit />
           </el-form-item>
+          <el-form-item label="客户简称（用于作图记录名称）">
+            <el-input v-model="form.companyShortName" maxlength="80" placeholder="例如：广东建工" />
+          </el-form-item>
+          <el-form-item label="所属行业">
+            <el-input v-model="form.industry" maxlength="100" placeholder="例如：建筑" />
+          </el-form-item>
         </div>
         <el-form-item label="备注">
           <el-input v-model="form.notes" type="textarea" :rows="3" maxlength="4000" show-word-limit />
@@ -286,24 +315,28 @@ onMounted(loadCustomers);
       <div v-loading="historyLoading" class="customer-history-list">
         <el-empty
           v-if="!historyLoading && !generationArchives.length"
-          description="该客户尚未归档生成图片"
+          description="该客户尚无作图记录"
         />
         <article v-for="record in generationArchives" :key="record.jobId" class="customer-history-card">
           <el-image
-            :src="record.fileUrl"
-            :preview-src-list="[record.fileUrl]"
+            v-if="record.resultUrl"
+            :src="record.resultUrl"
+            :preview-src-list="[record.resultUrl]"
             fit="cover"
             preview-teleported
           />
+          <div v-else class="customer-history-status" :class="`status-${record.status}`">
+            {{ statusLabel(record.status) }}
+          </div>
           <div>
-            <strong>{{ record.product?.name || "未记录产品" }}</strong>
+            <strong>{{ record.displayName || record.product?.name || "未记录产品" }}</strong>
             <span>{{ compositionLabel(record.composition) }}</span>
             <span>{{ record.scene?.name || "未记录场景" }} · {{ record.model?.name || "未记录模特" }}</span>
             <small>
-              {{ record.archivedBy?.displayName || "未知员工" }}归档 · {{ formatTime(record.createdAt) }}
+              {{ record.user?.displayName || "未知员工" }}创建 · {{ formatTime(record.createdAt) }}
             </small>
           </div>
-          <el-link :href="record.fileUrl" target="_blank" type="primary">查看原图</el-link>
+          <el-link v-if="record.resultUrl" :href="record.resultUrl" target="_blank" type="primary">查看结果</el-link>
         </article>
       </div>
     </el-drawer>

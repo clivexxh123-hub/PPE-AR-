@@ -7,12 +7,14 @@ const { CustomerRepository } = require("../services/customer-repository");
 const { CustomerService } = require("../services/customer-service");
 const { GenerationArchiveRepository } = require("../services/generation-archive-repository");
 const { GenerationArchiveService } = require("../services/generation-archive-service");
+const { GenerationRecordRepository } = require("../services/generation-records");
 
 const router = express.Router();
 const service = new CustomerService({ repository: new CustomerRepository(pool) });
 const generationArchives = new GenerationArchiveService({
     repository: new GenerationArchiveRepository(pool)
 });
+const generationRecords = new GenerationRecordRepository(pool);
 const archiveUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 20 * 1024 * 1024, files: 1 }
@@ -22,6 +24,27 @@ router.get("/", requirePermission("records.read_all"), async (request, response)
     const result = await service.list(request.query, request.auth.user);
     response.json({ success: true, data: result });
 });
+
+router.get(
+    "/:customerId/generation-records",
+    requirePermission("records.read_all"),
+    async (request, response) => {
+        const customer = await service.get(request.params.customerId, request.auth.user);
+        const records = await generationRecords.list({
+            customerId: customer.id,
+            limit: request.query.limit || 200
+        });
+        response.json({
+            success: true,
+            data: records.map((record) => ({
+                ...record,
+                resultUrl: record.status === "succeeded"
+                    ? `/api/ai/generations/${encodeURIComponent(record.jobId)}/result`
+                    : null
+            }))
+        });
+    }
+);
 
 router.get("/:customerId", requirePermission("records.read_all"), async (request, response) => {
     const customer = await service.get(request.params.customerId, request.auth.user);

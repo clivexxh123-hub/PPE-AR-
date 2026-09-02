@@ -16,6 +16,20 @@
       <button type="button" @click="clearEditSource">退出修改</button>
     </div>
 
+    <div v-else-if="activeCaseTemplate" class="generation-case-template-banner">
+      <div class="generation-case-template-icon">案</div>
+      <div>
+        <span>已从行业案例库创建新方案</span>
+        <strong>{{ activeCaseTemplate.name }}</strong>
+        <p>
+          {{ activeCaseTemplate.industry }} · {{ activeCaseTemplate.workScene }} ·
+          模板配置已复制，可自由修改且不会覆盖原案例。
+        </p>
+        <small v-if="caseTemplateWarnings.length">{{ caseTemplateWarnings.join("；") }}</small>
+      </div>
+      <button type="button" @click="clearCaseTemplate">退出案例</button>
+    </div>
+
     <div class="ai-layout">
       <div class="ai-config">
         <div class="ai-card product-card">
@@ -332,26 +346,6 @@
               </li>
             </ul>
           </div>
-          <div v-if="!CLIENT_DEMO_MODE" class="generation-archive-control">
-            <div>
-              <strong>客户图片归档</strong>
-              <span v-if="isMockEngineActive">Mock 结果仅用于链路测试，禁止进入客户正式资料。</span>
-              <span v-else>仅列出本人客户；已确认真实引擎的成功结果才允许归档。</span>
-            </div>
-            <select v-model="selectedArchiveCustomerId">
-              <option value="">请选择客户</option>
-              <option v-for="customer in ownCustomers" :key="customer.id" :value="customer.id">
-                {{ customer.customerName }} · {{ customer.archiveName }}
-              </option>
-            </select>
-            <button
-              type="button"
-              :disabled="archivingResults || isMockEngineActive || !selectedArchiveCustomerId || !archivableResults.length"
-              @click="archiveSuccessfulResults"
-            >
-              {{ archivingResults ? "正在归档…" : `一键归档 ${archivableResults.length} 张真实图片` }}
-            </button>
-          </div>
         </div>
 
       </div>
@@ -371,6 +365,26 @@
                 : "✨ 开始真实生成"
             }}
           </button>
+          <div v-if="!CLIENT_DEMO_MODE" class="generation-archive-control">
+            <div class="generation-archive-copy">
+              <strong>当前客户</strong>
+              <span v-if="isMockEngineActive">Mock 结果不可归档</span>
+              <span v-else>本次作图自动记入客户；真实结果可正式归档</span>
+            </div>
+            <select v-model="selectedCustomerId">
+              <option value="">请选择客户</option>
+              <option v-for="customer in ownCustomers" :key="customer.id" :value="customer.id">
+                {{ customer.customerName }} · {{ customer.archiveName }}
+              </option>
+            </select>
+            <button
+              type="button"
+              :disabled="archivingResults || isMockEngineActive || !selectedCustomerId || !archivableResults.length"
+              @click="archiveSuccessfulResults"
+            >
+              {{ archivingResults ? "正在归档…" : `归档 ${archivableResults.length} 张正式图片` }}
+            </button>
+          </div>
           <button
             class="download-result-button"
             type="button"
@@ -586,6 +600,19 @@
           <button @click="searchLogos">搜索</button>
         </div>
 
+        <div v-if="currentLogoTarget?.logo" class="logo-size-control">
+          <div>
+            <strong>Logo 实际印刷尺寸</strong>
+            <span v-if="currentLogoDimensions">
+              {{ currentLogoDimensions.width }} × {{ currentLogoDimensions.height }} mm
+            </span>
+            <span v-else>当前产品暂无毫米标准，请人工确认</span>
+          </div>
+          <input v-model.number="currentLogoScale" type="range" min="60" max="120" step="5" />
+          <b>{{ currentLogoScale }}%</b>
+          <small>保持原比例缩放，并自动限制在当前产品印刷安全区内。</small>
+        </div>
+
         <div class="logo-actions">
           <button type="button" @click="clearSelectedLogo">不使用 Logo</button>
           <button @click="openLogoUpload">上传Logo</button>
@@ -737,6 +764,13 @@ import {
   normalizeShowcaseProduct,
   safeExportName
 } from "../utils/showcase";
+import {
+  contrastDecision,
+  contrastRatio,
+  printPreflightPayload,
+  resolvePrintStandard,
+  scaleDimensions
+} from "../utils/printPreflight";
 import "../assets/aigenerator-restored.css";
 import "../assets/aigenerator-result-layout.css";
 import "../assets/ai-integration.css";
@@ -746,6 +780,8 @@ const router = useRouter();
 const route = useRoute();
 const editSourceRecord = ref(null);
 const editContextWarnings = ref([]);
+const activeCaseTemplate = ref(null);
+const caseTemplateWarnings = ref([]);
 const resultPanelOptions = Object.freeze([
   { id: "generation", label: "生成结果" },
   { id: "product-details", label: "产品印刷细节" },
@@ -829,7 +865,7 @@ const generationProgressText = ref("");
 const generationSourceProductId = ref("");
 const isExportingResult = ref(false);
 const ownCustomers = ref([]);
-const selectedArchiveCustomerId = ref("");
+const selectedCustomerId = ref("");
 const archivingResults = ref(false);
 const aiServiceState = ref("checking");
 const aiEngine = ref("");
@@ -1002,6 +1038,77 @@ async function searchProducts() {
   productList.value = res.list || [];
 }
 
+async function loadCaseTemplate() {
+  const templateId = typeof route.query.caseTemplateId === "string"
+    ? route.query.caseTemplateId.trim()
+    : "";
+  if (!templateId) return false;
+
+  try {
+    const response = await request.get(
+      `/case-templates/${encodeURIComponent(templateId)}`,
+      { silentError: true }
+    );
+    const template = response.data || null;
+    if (!template?.id) throw new Error("案例模板缺少模板信息");
+    activeCaseTemplate.value = template;
+    caseTemplateWarnings.value = [];
+
+    const filters = template.selection?.modelFilters || {};
+    modelShotFilter.value = filters.shotType || "all";
+    modelViewFilter.value = filters.view || "all";
+    modelGenderFilter.value = filters.gender || "all";
+    selectFirstFilteredModel();
+
+    const sceneKeywords = Array.isArray(template.selection?.sceneKeywords)
+      ? template.selection.sceneKeywords
+      : [];
+    const matchedScene = scenes.value.find((scene) => {
+      const source = `${scene.name || scene.scene_name || ""} ${scene.industry || ""}`.toLowerCase();
+      return sceneKeywords.some(keyword => source.includes(String(keyword).toLowerCase()));
+    });
+    if (matchedScene) selectedScene.value = matchedScene;
+    else if (sceneKeywords.length) caseTemplateWarnings.value.push("没有找到模板对应的行业场景，请手动选择");
+
+    const productKeywords = Array.isArray(template.selection?.productKeywords)
+      ? template.selection.productKeywords
+      : [];
+    for (const keyword of productKeywords.slice(0, 4)) {
+      try {
+        const result = await request.get("/products", {
+          params: { keyword, page: 1, size: 10 },
+          silentError: true
+        });
+        const candidates = result.list || [];
+        const candidate = candidates.find(item => Number(item.has_files || item.file_count) > 0)
+          || candidates[0];
+        if (candidate && !selectedProductIds.value.has(String(candidate.id))) {
+          await addSelectedProduct(candidate, { silent: true });
+        } else if (!candidate) {
+          caseTemplateWarnings.value.push(`未找到“${keyword}”产品，请手动补充`);
+        }
+      } catch {
+        caseTemplateWarnings.value.push(`“${keyword}”产品加载失败，请手动补充`);
+      }
+    }
+
+    ElMessage.success("案例配置已复制到新的 AI 作图方案");
+    return true;
+  } catch (error) {
+    activeCaseTemplate.value = null;
+    caseTemplateWarnings.value = [];
+    ElMessage.error(errorMessage(error, "案例模板加载失败"));
+    await router.replace({ path: "/product-library", query: { tab: "cases" } });
+    return false;
+  }
+}
+
+async function clearCaseTemplate() {
+  activeCaseTemplate.value = null;
+  caseTemplateWarnings.value = [];
+  await router.replace({ path: "/ai-generator" });
+}
+
 async function loadEditContext() {
   const sourceJobId = typeof route.query.sourceJobId === "string"
     ? route.query.sourceJobId.trim()
@@ -1017,6 +1124,22 @@ async function loadEditContext() {
     if (!context?.jobId) throw new Error("原作图记录缺少任务信息");
     editSourceRecord.value = context;
     editContextWarnings.value = [];
+    selectedCustomerId.value = context.customer?.id || "";
+
+    if (context.caseTemplate?.id) {
+      try {
+        const templateResponse = await request.get(
+          `/case-templates/${encodeURIComponent(context.caseTemplate.id)}`,
+          { silentError: true }
+        );
+        activeCaseTemplate.value = templateResponse.data || null;
+      } catch {
+        activeCaseTemplate.value = {
+          id: context.caseTemplate.id,
+          name: context.caseTemplate.name || "历史案例模板"
+        };
+      }
+    }
 
     if (context.product?.id) {
       try {
@@ -1145,6 +1268,8 @@ const vestPrintZones = ref([
     surface: "vest",
     type: "logo",
     printType: "logo",
+    logoScale: 100,
+    printStandard: resolvePrintStandard("vest", "front"),
     logo: null
   },
   {
@@ -1192,6 +1317,27 @@ const vestPrintZones = ref([
     printText: "安全生产"
   }
 ]);
+
+const currentLogoTarget = computed(() => [
+  ...productViews.value,
+  ...vestPrintZones.value
+].find(item => item.id === currentLogoView.value) || null);
+const currentLogoScale = computed({
+  get: () => Math.min(120, Math.max(60, Number(currentLogoTarget.value?.logoScale) || 100)),
+  set: (value) => {
+    if (!currentLogoTarget.value) return;
+    currentLogoTarget.value.logoScale = Math.min(120, Math.max(60, Number(value) || 100));
+    syncSelectedProductSnapshot();
+  }
+});
+const currentLogoDimensions = computed(() => scaleDimensions(
+  currentLogoTarget.value?.printStandard
+    || resolvePrintStandard(
+      currentLogoTarget.value?.surface,
+      currentLogoTarget.value?.face || currentLogoTarget.value?.id
+    ),
+  currentLogoScale.value
+));
 
 const selectedVestLogo = computed(() => (
   vestPrintZones.value.find(zone => zone.id === "vest-front-logo")?.logo || null
@@ -1328,7 +1474,7 @@ function syncSelectedProductSnapshot() {
   ));
 }
 
-async function addSelectedProduct(product) {
+async function addSelectedProduct(product, { silent = false } = {}) {
   const id = String(product?.id || "");
   if (!id || selectedProductIds.value.has(id)) {
     if (id) activateSelectedProduct(id);
@@ -1342,7 +1488,7 @@ async function addSelectedProduct(product) {
   syncSelectedProductSnapshot();
   productList.value = [];
   productKeyword.value = "";
-  ElMessage.success(`${detail.product_name}已加入多产品方案`);
+  if (!silent) ElMessage.success(`${detail.product_name}已加入多产品方案`);
 }
 
 function removeSelectedProduct(productId) {
@@ -1448,6 +1594,44 @@ async function verifyDecodableImage(source, label) {
   return { width: image.naturalWidth, height: image.naturalHeight };
 }
 
+async function averageOpaqueColor(source, label) {
+  const blob = await fetchImageBlob(source, label);
+  const image = await decodeImageBlob(blob, label);
+  const scale = Math.min(1, 256 / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error(`${label}无法进行颜色检查`);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  let weight = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    const alpha = pixels[index + 3] / 255;
+    if (alpha < .25) continue;
+    red += pixels[index] * alpha;
+    green += pixels[index + 1] * alpha;
+    blue += pixels[index + 2] * alpha;
+    weight += alpha;
+  }
+  if (!weight) throw new Error(`${label}没有可用于颜色检查的可见像素`);
+  return {
+    r: Math.round(red / weight),
+    g: Math.round(green / weight),
+    b: Math.round(blue / weight)
+  };
+}
+
+function logoScaleForView(view) {
+  if (view?.surface === "vest") {
+    return Number(vestPrintZones.value.find(zone => zone.id === "vest-front-logo")?.logoScale) || 100;
+  }
+  return Number(view?.logoScale) || 100;
+}
+
 function viewForComposition(product, composition) {
   const views = productViewsById.value[String(product?.id)] || [];
   const preferredIds = composition?.view === "slight_side"
@@ -1469,6 +1653,8 @@ function outfitItemsForComposition(composition) {
         name: view.name,
         image: view.image,
         surface: view.surface,
+        logoScale: logoScaleForView(view),
+        printStandard: view.printStandard || resolvePrintStandard(view.surface, view.id),
         printText: view.printText || ""
       },
       logo: logoForView(view),
@@ -1522,6 +1708,47 @@ async function runGenerationPreflight() {
         add(`logo-${index}`, `${label} Logo`, "passed", `图片可读取：${decoded.width}×${decoded.height}`);
       } catch (error) {
         add(`logo-${index}`, `${label} Logo`, "failed", error?.message || "Logo 检查失败");
+      }
+
+      const standard = item.view.printStandard
+        || resolvePrintStandard(item.view.surface, item.view.id);
+      const dimensions = scaleDimensions(standard, item.view.logoScale);
+      if (dimensions) {
+        add(
+          `print-size-${index}`,
+          `${label}印刷尺寸`,
+          "passed",
+          `${dimensions.width}×${dimensions.height} mm · 已锁定原比例并限制在${standard.label}`
+        );
+      } else {
+        add(
+          `print-size-${index}`,
+          `${label}印刷尺寸`,
+          "warning",
+          "该产品尚未配置毫米尺寸，请由印刷人员人工确认安全区"
+        );
+      }
+
+      try {
+        const [productColor, logoColor] = await Promise.all([
+          averageOpaqueColor(item.view.image, `${label}底色`),
+          averageOpaqueColor(item.logo.image, `${label} Logo`)
+        ]);
+        const ratio = contrastRatio(productColor, logoColor);
+        const decision = contrastDecision(ratio);
+        add(
+          `print-contrast-${index}`,
+          `${label}撞色检查`,
+          decision.status,
+          `视觉对比度 ${ratio.toFixed(1)}:1；${decision.treatment}`
+        );
+      } catch (error) {
+        add(
+          `print-contrast-${index}`,
+          `${label}撞色检查`,
+          "warning",
+          `${error?.message || "颜色取样失败"}；请使用白墨底托或人工打样确认`
+        );
       }
     }
   }
@@ -1613,6 +1840,9 @@ function generationPayload(composition) {
   const primary = outfitItems[0];
   return {
     sourceJobId: editSourceRecord.value?.jobId || undefined,
+    customerId: selectedCustomerId.value || undefined,
+    caseTemplateId: activeCaseTemplate.value?.id || undefined,
+    printPreflight: printPreflightPayload(preflightChecks.value),
     batchId: generationBatchId.value,
     product: primary?.product,
     view: primary?.view,
@@ -1750,6 +1980,11 @@ async function startAIGeneration() {
   generationProgressText.value = "";
   generationSourceProductId.value = "";
   preflightChecks.value = [];
+
+  if (!selectedCustomerId.value) {
+    generationError.value = "请先选择本次作图所属客户，生成记录会自动归入该客户";
+    return;
+  }
 
   if (!selectedProducts.value.length) {
     generationError.value = "请至少选择一个产品";
@@ -2011,7 +2246,7 @@ async function archiveSuccessfulResults() {
     ElMessage.warning("Mock 占位图禁止归档到客户正式资料");
     return;
   }
-  if (!selectedArchiveCustomerId.value || !archivableResults.value.length || archivingResults.value) return;
+  if (!selectedCustomerId.value || !archivableResults.value.length || archivingResults.value) return;
   archivingResults.value = true;
   let archived = 0;
   const failures = [];
@@ -2025,7 +2260,7 @@ async function archiveSuccessfulResults() {
         form.append("jobId", result.jobId);
         form.append("image", blob, result.filename || `${result.jobId}.png`);
         await request.post(
-          `/customers/${encodeURIComponent(selectedArchiveCustomerId.value)}/generation-archives`,
+          `/customers/${encodeURIComponent(selectedCustomerId.value)}/generation-archives`,
           form,
           { timeout: 60000, silentError: true }
         );
@@ -2055,7 +2290,8 @@ onMounted(async () => {
   ]);
   if (!CLIENT_DEMO_MODE) {
     await checkAiService();
-    await loadEditContext();
+    if (route.query.sourceJobId) await loadEditContext();
+    else await loadCaseTemplate();
     aiHealthTimer = window.setInterval(() => checkAiService({ silent: true }), 10_000);
   }
 });
