@@ -68,6 +68,59 @@ def _helmet_eye_guard(size: tuple[int, int], anchors: dict[str, Any]) -> Image.I
     return guard.filter(ImageFilter.GaussianBlur(max(1, round(face_width * 0.025))))
 
 
+def _helmet_contact_band(
+    band: Image.Image, visible: Image.Image, scale: float, size: tuple[int, int], placement: dict[str, Any]
+) -> Image.Image:
+    left, top = float(placement["rendered_x"]), float(placement["rendered_y"])
+    width, height = float(placement["rendered_width"]), float(placement["rendered_height"])
+    right, bottom = left + width, top + height
+    brim_band = _rect(size, (left - width * 0.025, bottom - height * 0.16, right + width * 0.025, bottom + height * 0.04))
+    visible_brim = ImageChops.multiply(visible, brim_band)
+    brim_edge = ImageChops.subtract(_blur_dilate(visible_brim, scale * 0.026), _blur_erode(visible_brim, scale * 0.018))
+    return ImageChops.lighter(brim_band, brim_edge)
+
+
+def _vest_contact_band(
+    band: Image.Image, _visible: Image.Image, _scale: float, size: tuple[int, int], placement: dict[str, Any]
+) -> Image.Image:
+    left, top = float(placement["rendered_x"]), float(placement["rendered_y"])
+    width, height = float(placement["rendered_width"]), float(placement["rendered_height"])
+    right, bottom = left + width, top + height
+    band = ImageChops.lighter(band, _rect(size, (left - width * 0.07, top - height * 0.05, right + width * 0.07, top + height * 0.18)))
+    band = ImageChops.lighter(band, _rect(size, (left - width * 0.07, top, left + width * 0.14, bottom)))
+    band = ImageChops.lighter(band, _rect(size, (right - width * 0.14, top, right + width * 0.07, bottom)))
+    return ImageChops.subtract(band, _rect(size, (left + width * 0.23, top + height * 0.20, right - width * 0.23, top + height * 0.94)))
+
+
+def _gloves_contact_band(
+    band: Image.Image, visible: Image.Image, scale: float, size: tuple[int, int], placement: dict[str, Any]
+) -> Image.Image:
+    left, top = float(placement["rendered_x"]), float(placement["rendered_y"])
+    width, height = float(placement["rendered_width"]), float(placement["rendered_height"])
+    right, bottom = left + width, top + height
+    band = ImageChops.lighter(band, _rect(size, (left - width * 0.08, bottom - height * 0.28, right + width * 0.08, bottom + height * 0.08)))
+    return ImageChops.lighter(band, visible.filter(ImageFilter.GaussianBlur(max(1.0, scale * 0.012))))
+
+
+def _boots_contact_band(
+    band: Image.Image, visible: Image.Image, scale: float, size: tuple[int, int], placement: dict[str, Any]
+) -> Image.Image:
+    left, top = float(placement["rendered_x"]), float(placement["rendered_y"])
+    width, height = float(placement["rendered_width"]), float(placement["rendered_height"])
+    right, bottom = left + width, top + height
+    band = ImageChops.lighter(band, _rect(size, (left - width * 0.08, top - height * 0.07, right + width * 0.08, top + height * 0.28)))
+    band = ImageChops.lighter(band, _rect(size, (left - width * 0.06, bottom - height * 0.15, right + width * 0.06, bottom + height * 0.06)))
+    return ImageChops.subtract(band, _blur_erode(visible, scale * 0.10))
+
+
+_CATEGORY_MASK_BUILDERS = {
+    "helmet": _helmet_contact_band,
+    "vest": _vest_contact_band,
+    "gloves": _gloves_contact_band,
+    "boots": _boots_contact_band,
+}
+
+
 def build_contact_mask(
     product_alpha: Image.Image,
     ppe_category: str,
@@ -88,59 +141,10 @@ def build_contact_mask(
     )
     band = ring
 
-    for placement in placements:
-        left = float(placement["rendered_x"])
-        top = float(placement["rendered_y"])
-        width = float(placement["rendered_width"])
-        height = float(placement["rendered_height"])
-        right = left + width
-        bottom = top + height
-        if category == "helmet":
-            # Only the brim/hairline contact is refinable.  A full shell ring
-            # lets img2img reinterpret the P10 dome and printed artwork.
-            brim_band = _rect(
-                size,
-                (
-                    left - width * 0.025,
-                    bottom - height * 0.16,
-                    right + width * 0.025,
-                    bottom + height * 0.04,
-                ),
-            )
-            visible_brim = ImageChops.multiply(visible, brim_band)
-            brim_edge = ImageChops.subtract(
-                _blur_dilate(visible_brim, scale * 0.026),
-                _blur_erode(visible_brim, scale * 0.018),
-            )
-            band = ImageChops.lighter(brim_band, brim_edge)
-        elif category == "vest":
-            band = ImageChops.lighter(
-                band,
-                _rect(size, (left - width * 0.07, top - height * 0.05, right + width * 0.07, top + height * 0.18)),
-            )
-            band = ImageChops.lighter(band, _rect(size, (left - width * 0.07, top, left + width * 0.14, bottom)))
-            band = ImageChops.lighter(band, _rect(size, (right - width * 0.14, top, right + width * 0.07, bottom)))
-            core = _rect(size, (left + width * 0.23, top + height * 0.20, right - width * 0.23, top + height * 0.94))
-            band = ImageChops.subtract(band, core)
-        elif category == "gloves":
-            band = ImageChops.lighter(
-                band,
-                _rect(size, (left - width * 0.08, bottom - height * 0.28, right + width * 0.08, bottom + height * 0.08)),
-            )
-            # Gloves must conform to individual fingers rather than retain the
-            # flat catalog cutout. Repaint their full visible area at the lower
-            # human-wearing denoise while helmets/vest print cores stay locked.
-            band = ImageChops.lighter(band, visible.filter(ImageFilter.GaussianBlur(max(1.0, scale * 0.012))))
-        elif category == "boots":
-            band = ImageChops.lighter(
-                band,
-                _rect(size, (left - width * 0.08, top - height * 0.07, right + width * 0.08, top + height * 0.28)),
-            )
-            band = ImageChops.lighter(
-                band,
-                _rect(size, (left - width * 0.06, bottom - height * 0.15, right + width * 0.06, bottom + height * 0.06)),
-            )
-            band = ImageChops.subtract(band, _blur_erode(visible, scale * 0.10))
+    builder = _CATEGORY_MASK_BUILDERS.get(category)
+    if builder is not None:
+        for placement in placements:
+            band = builder(band, visible, scale, size, placement)
 
     if category == "helmet":
         band = ImageChops.subtract(band, _helmet_eye_guard(size, anchors))
