@@ -339,7 +339,7 @@ def render_human_wearing_design(
         target_width = max(1, round(float(requested["width"])))
         target_height = max(1, round(float(requested["height"])))
         layer = render_category_layer(
-            normalized_category, source_component, target_width, target_height, view
+            normalized_category, source_component, target_width, target_height, view, requested
         )
         if requested.get("mirror") and len(paired_sources) == 1:
             layer = ImageOps.mirror(layer)
@@ -372,14 +372,19 @@ def render_human_wearing_design(
     output_dir.mkdir(parents=True, exist_ok=True)
     base_path = output_dir / "human_wearing_base.png"
     product_layer_path = output_dir / "human_wearing_product_layer.png"
+    torso_quad_path = output_dir / "vest_torso_quad_pre_composite.png"
     image_path = output_dir / "human_wearing_input.png"
     mask_path = output_dir / "human_wearing_mask.png"
+    foreground_occlusion_path = output_dir / "foreground_occlusion_mask.png"
     debug_path = output_dir / "human_wearing_mask_debug.png"
     metadata_path = output_dir / "human_wearing_metadata.json"
     human.convert("RGB").save(base_path, format="PNG")
     product_canvas.save(product_layer_path, format="PNG")
+    if normalized_category == "vest" and auto_align:
+        product_canvas.save(torso_quad_path, format="PNG")
     blend.composite.save(image_path, format="PNG")
     blend.mask.save(mask_path, format="PNG")
+    blend.foreground_occlusion_mask.save(foreground_occlusion_path, format="PNG")
     blend.debug.save(debug_path, format="PNG")
 
     first = rendered_placements[0]
@@ -394,8 +399,10 @@ def render_human_wearing_design(
                 "ppe_reference_path": str(ppe_path),
                 "base_path": str(base_path),
                 "product_layer_path": str(product_layer_path),
+                "torso_quad_pre_composite_path": str(torso_quad_path) if torso_quad_path.exists() else None,
                 "output_path": str(image_path),
                 "mask_path": str(mask_path),
+                "foreground_occlusion_mask_path": str(foreground_occlusion_path),
                 "mask_debug_path": str(debug_path),
                 "width": human.width,
                 "height": human.height,
@@ -404,6 +411,7 @@ def render_human_wearing_design(
                 "placement_profile": placement_profile,
                 "ppe_category": normalized_category,
                 "placement_strategy": placement_strategy,
+                "vest_geometry": "torso_quad_v1" if normalized_category == "vest" and auto_align else None,
                 "position_x_ratio": position_x_ratio,
                 "position_y_ratio": position_y_ratio,
                 "ppe_width_ratio": ppe_width_ratio,

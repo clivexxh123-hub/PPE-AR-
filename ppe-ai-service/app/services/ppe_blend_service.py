@@ -12,6 +12,7 @@ class BlendResult:
     composite: Image.Image
     mask: Image.Image
     debug: Image.Image
+    foreground_occlusion_mask: Image.Image
     metadata: dict[str, Any]
 
 
@@ -168,6 +169,40 @@ def build_contact_mask(
     }
 
 
+def build_foreground_occlusion_mask(
+    product_alpha: Image.Image,
+    ppe_category: str,
+    placements: list[dict[str, Any]],
+    anchors: dict[str, Any],
+) -> tuple[Image.Image, dict[str, Any]]:
+    """Return the explicit foreground layer used above a PPE pre-composite.
+
+    A catalog Vest already encodes its armholes and V-neck in its alpha silhouette.
+    Restoring guessed arm-side bands or a synthetic collar *inside* that silhouette
+    makes the garment look cut through and can duplicate the subject before diffusion.
+    Keep the source product alpha authoritative until a real human-parsing signal is
+    available; the contact/diffusion mask remains unchanged.
+    """
+    size = product_alpha.size
+    empty = Image.new("L", size, 0)
+    category = ppe_category.strip().lower()
+    if category != "vest":
+        return empty, {
+            "enabled": False,
+            "strategy": "none",
+            "reason": "category_not_vest",
+            "diffusion_mask_changed": False,
+        }
+    return empty, {
+        "enabled": False,
+        "strategy": "vest_product_alpha_authoritative_v1",
+        "protected_regions": [],
+        "reason": "source_vest_alpha_preserves_real_v_neck_and_armholes",
+        "mask_coverage_ratio": 0.0,
+        "diffusion_mask_changed": False,
+    }
+
+
 def apply_edge_treatment(
     human: Image.Image,
     product_canvas: Image.Image,
@@ -214,11 +249,18 @@ def prepare_blend_inputs(
     mask, mask_metadata = build_contact_mask(
         product_canvas.getchannel("A"), ppe_category, placements, anchors
     )
-    overlay = Image.new("RGB", treated.size, (255, 48, 48))
-    debug = Image.composite(Image.blend(treated, overlay, 0.42), treated, mask)
+    foreground_occlusion, occlusion_metadata = build_foreground_occlusion_mask(
+        product_canvas.getchannel("A"), ppe_category, placements, anchors
+    )
+    composite = Image.composite(human.convert("RGB"), treated, foreground_occlusion)
+    overlay = Image.new("RGB", composite.size, (255, 48, 48))
+    debug = Image.composite(Image.blend(composite, overlay, 0.42), composite, mask)
+    foreground_overlay = Image.new("RGB", composite.size, (48, 156, 255))
+    debug = Image.composite(Image.blend(debug, foreground_overlay, 0.38), debug, foreground_occlusion)
     return BlendResult(
-        composite=treated,
+        composite=composite,
         mask=mask,
         debug=debug,
-        metadata={**mask_metadata, **edge_metadata},
+        foreground_occlusion_mask=foreground_occlusion,
+        metadata={**mask_metadata, **edge_metadata, "foreground_occlusion": occlusion_metadata},
     )

@@ -46,9 +46,14 @@ def resolve_ppe_placements(
     if category == "vest":
         width = max(1, round(float(anchors["shoulder_width"]) * 1.04))
         height = max(1, round(width * ppe_aspect))
-        return [{"role": "torso", "center_x": (anchors["shoulder_left"] + anchors["shoulder_right"]) / 2.0,
-                 "center_y": float(anchors["shoulder_y"]) + height / 2, "width": width, "height": height,
-                 "rotation": -2.0 if slight_side else 0.0, "mirror": False}]
+        center_x = (anchors["shoulder_left"] + anchors["shoulder_right"]) / 2.0
+        placement = {
+            "role": "torso", "center_x": center_x,
+            "center_y": float(anchors["shoulder_y"]) + height / 2, "width": width, "height": height,
+            "rotation": -2.0 if slight_side else 0.0, "mirror": False,
+        }
+        placement["torso_quad"] = _vest_torso_quad(anchors, placement)
+        return [placement]
 
     if category == "goggles":
         width = max(1, round(face_width * 1.48))
@@ -134,8 +139,103 @@ def warp_vest_rows(image: Image.Image, width: int, height: int, view: str) -> Im
     return warped
 
 
-def render_category_layer(category: str, image: Image.Image, width: int, height: int, view: str) -> Image.Image:
+def _subject_span_at_y(anchors: dict[str, Any], y: int, center_x: float) -> tuple[float, float] | None:
+    """Return the central silhouette span without adding a segmentation dependency."""
+    mask = anchors.get("subject_mask")
+    if not isinstance(mask, Image.Image) or not 0 <= y < mask.height:
+        return None
+    pixels = mask.convert("L")
+    center = min(pixels.width - 1, max(0, round(center_x)))
+    if pixels.getpixel((center, y)) < 32:
+        return None
+    left = center
+    while left > 0 and pixels.getpixel((left - 1, y)) >= 32:
+        left -= 1
+    right = center
+    while right < pixels.width - 1 and pixels.getpixel((right + 1, y)) >= 32:
+        right += 1
+    return float(left), float(right + 1)
+
+
+def _vest_torso_quad(anchors: dict[str, Any], placement: dict[str, Any]) -> list[list[float]]:
+    """Measure shoulder/waist corners for the VEST-GEO-01 pre-composite warp."""
+    center_x = float(placement["center_x"])
+    shoulder_y = float(anchors["shoulder_y"])
+    width = float(placement["width"])
+    height = float(placement["height"])
+    waist_y = round(shoulder_y + height * 0.88)
+    span = _subject_span_at_y(anchors, waist_y, center_x)
+    if span is None:
+        waist_left, waist_right = center_x - width * 0.43, center_x + width * 0.43
+    else:
+        waist_left, waist_right = span
+        # A silhouette may include both arms. Keep the derived clothing edge in
+        # a conservative torso window rather than allowing arm width to stretch
+        # the product layer.
+        waist_left = max(waist_left, center_x - width * 0.54)
+        waist_right = min(waist_right, center_x + width * 0.54)
+    return [
+        [float(anchors["shoulder_left"]), shoulder_y],
+        [float(anchors["shoulder_right"]), shoulder_y],
+        [waist_right, float(waist_y)],
+        [waist_left, float(waist_y)],
+    ]
+
+
+def _perspective_coefficients(
+    destination: list[tuple[float, float]], source: list[tuple[float, float]]
+) -> tuple[float, float, float, float, float, float, float, float]:
+    """Solve Pillow's output-to-source projective transform without NumPy."""
+    rows: list[list[float]] = []
+    for (x, y), (u, v) in zip(destination, source, strict=True):
+        rows.append([x, y, 1.0, 0.0, 0.0, 0.0, -u * x, -u * y, u])
+        rows.append([0.0, 0.0, 0.0, x, y, 1.0, -v * x, -v * y, v])
+    for pivot in range(8):
+        best = max(range(pivot, 8), key=lambda row: abs(rows[row][pivot]))
+        if abs(rows[best][pivot]) < 1e-8:
+            raise ValueError("Vest torso quadrilateral is degenerate.")
+        rows[pivot], rows[best] = rows[best], rows[pivot]
+        factor = rows[pivot][pivot]
+        rows[pivot] = [value / factor for value in rows[pivot]]
+        for row in range(8):
+            if row == pivot:
+                continue
+            factor = rows[row][pivot]
+            rows[row] = [value - factor * pivot_value for value, pivot_value in zip(rows[row], rows[pivot], strict=True)]
+    return tuple(rows[index][8] for index in range(8))
+
+
+def warp_vest_torso_quad(
+    image: Image.Image,
+    width: int,
+    height: int,
+    torso_quad: list[list[float]],
+    placement: dict[str, Any],
+) -> Image.Image:
+    """Project the catalog Vest into measured shoulder/waist geometry only."""
+    origin_x = float(placement["center_x"]) - width / 2
+    origin_y = float(placement["center_y"]) - height / 2
+    destination = [(point[0] - origin_x, point[1] - origin_y) for point in torso_quad]
+    source = [(0.0, 0.0), (float(width), 0.0), (float(width), float(height)), (0.0, float(height))]
+    coefficients = _perspective_coefficients(destination, source)
+    base = image.resize((width, height), Image.Resampling.LANCZOS)
+    return base.transform(
+        (width, height), Image.Transform.PERSPECTIVE, coefficients, Image.Resampling.BICUBIC
+    )
+
+
+def render_category_layer(
+    category: str,
+    image: Image.Image,
+    width: int,
+    height: int,
+    view: str,
+    placement: dict[str, Any] | None = None,
+) -> Image.Image:
     """Keep category-specific geometry out of the public orchestrator."""
     if category == "vest":
+        torso_quad = placement.get("torso_quad") if placement is not None else None
+        if torso_quad is not None and placement is not None:
+            return warp_vest_torso_quad(image, width, height, torso_quad, placement)
         return warp_vest_rows(image, width, height, view)
     return image.resize((width, height), Image.Resampling.LANCZOS)

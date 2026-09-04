@@ -9,6 +9,10 @@ from PIL import Image, ImageChops
 
 def lock_unmasked_regions(generated_path: Path, input_path: Path, mask_path: Path) -> dict[str, Any]:
     """Apply the existing contact-mask output invariant without changing it."""
+    raw_output_path = generated_path.with_name(
+        f"{generated_path.stem}_comfyui_raw{generated_path.suffix}"
+    )
+    raw_output_path.write_bytes(generated_path.read_bytes())
     with Image.open(generated_path) as source:
         generated = source.convert("RGB")
     with Image.open(input_path) as source:
@@ -27,4 +31,5 @@ def lock_unmasked_regions(generated_path: Path, input_path: Path, mask_path: Pat
         "applied": True, "method": "post_composite_unmasked_input_lock",
         "mask_coverage_ratio": round(coverage, 4), "unmasked_mismatch_pixels": unmasked_mismatch_pixels,
         "protected_regions": ["helmet_core", "eyes_face", "shirt", "body_outline", "background"],
+        "raw_output_path": str(raw_output_path), "final_output_path": str(generated_path),
     }

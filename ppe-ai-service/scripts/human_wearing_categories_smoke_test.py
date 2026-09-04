@@ -186,6 +186,17 @@ async def main() -> None:
                 assert prepared_path.exists() and details["processed_width"] == 512 and details["processed_height"] == 512
                 composite_metadata = json.loads(Path(composite["metadata_path"]).read_text(encoding="utf-8"))
                 assert composite_metadata["human_wearing_placement_profile"] == name
+                if name == "reflective_vest":
+                    item_metadata_path = Path(composite["outfit_items"][0]["metadata_path"])
+                    item_metadata = json.loads(item_metadata_path.read_text(encoding="utf-8"))
+                    assert item_metadata["vest_geometry"] == "torso_quad_v1"
+                    assert len(item_metadata["placements"][0]["torso_quad"]) == 4
+                    assert Path(item_metadata["torso_quad_pre_composite_path"]).exists()
+                    assert Path(item_metadata["foreground_occlusion_mask_path"]).exists()
+                    foreground = item_metadata["blend"]["foreground_occlusion"]
+                    assert foreground["strategy"] == "vest_product_alpha_authoritative_v1"
+                    assert foreground["enabled"] is False
+                    assert foreground["diffusion_mask_changed"] is False
                 output_metadata = json.loads(Path(record["metadata_path"]).read_text(encoding="utf-8"))
                 assert output_metadata["printed_design"]["human_wearing_placement_profile"] == name
 

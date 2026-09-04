@@ -81,10 +81,15 @@ def main() -> None:
         mask.putpixel((6, 6), 255)
         mask.save(mask_path)
         result = lock_unmasked_regions(generated_path, original_path, mask_path)
+        raw_output_path = Path(result["raw_output_path"])
+        assert raw_output_path.exists()
+        with Image.open(raw_output_path) as raw_output:
+            assert raw_output.convert("RGB").getpixel((6, 6)) == (220, 100, 20)
         with Image.open(generated_path) as final:
             assert final.convert("RGB").getpixel((6, 6)) == (220, 100, 20)
             assert final.convert("RGB").getpixel((0, 0)) == (20, 40, 60)
         assert result["unmasked_mismatch_pixels"] == 0
+        assert result["final_output_path"] == str(generated_path)
 
     print("HUMAN_WEARING_MODULARIZATION_SMOKE_OK")
 
